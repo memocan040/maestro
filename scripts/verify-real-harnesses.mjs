@@ -79,7 +79,7 @@ for (const agent of agents) {
   });
   const sessionId = randomUUID();
   try {
-    send({ handshake: { protocol_version: 14 } });
+    send({ handshake: { protocol_version: 15 } });
     await next((m) => m.handshake_ok || m.error);
     send({
       spawn: {

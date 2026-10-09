@@ -317,7 +317,20 @@ fn stage_settings(
     let agent_id = choose_agent(document, default_agent, task, role);
     let resolved = document
         .resolve(role, profile_id_for(task, role).as_deref())
-        .map(|profile| apply_capabilities(profile, capabilities))
+        .map(|profile| {
+            let mut stage_profile = profile.clone();
+            stage_profile.role = role;
+            if read_only
+                && stage_profile
+                    .permission_mode
+                    .as_deref()
+                    .is_some_and(|mode| !READ_ONLY_SAFE_MODES.contains(&mode))
+            {
+                stage_profile.permission_mode =
+                    resolve_automatic_mode(&capabilities.mode_ids, true);
+            }
+            apply_capabilities(&stage_profile, capabilities)
+        })
         .transpose()?;
     let mut warnings = resolved
         .as_ref()
@@ -740,6 +753,25 @@ mod tests {
         .unwrap();
         assert_eq!(refiner.permission_mode, None);
         assert_eq!(refiner.warnings.len(), 1);
+    }
+
+    #[test]
+    fn a_shared_worker_profile_is_resolved_for_the_actual_review_role() {
+        let mut doc = two_profiles();
+        doc.profiles[0].permission_mode = Some("acceptEdits".into());
+        let mut t = task();
+        t.profile_overrides = Some(format!("{{\"Reviewer\":\"{}\"}}", doc.profiles[0].id));
+        let resolved = stage_settings(&doc, None, &t, AgentRole::Reviewer, &capable()).unwrap();
+        assert!(resolved.read_only);
+        assert_eq!(resolved.permission_mode.as_deref(), Some("readonly"));
+        assert_eq!(
+            resolved.profile_id.as_deref(),
+            Some(doc.profiles[0].id.as_str())
+        );
+        assert_eq!(
+            doc.profiles[0].permission_mode.as_deref(),
+            Some("acceptEdits")
+        );
     }
 
     #[test]

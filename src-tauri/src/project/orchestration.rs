@@ -4,6 +4,34 @@ use maestro_protocol::{OrchestrationRequest, ServerRequest, ServerResponse};
 use std::sync::Arc;
 use tauri::State;
 
+#[derive(Clone, serde::Serialize, specta::Type)]
+pub struct TeamProvider {
+    pub id: String,
+    pub name: String,
+    pub installed: bool,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn list_team_providers(
+    app_state: State<'_, Arc<AppState>>,
+    connection: crate::acp::ConnectionKey,
+) -> Result<Vec<TeamProvider>, String> {
+    crate::acp::discovery_handlers::ensure_connection_server(&app_state, connection).await?;
+    let agents =
+        crate::acp::query_list_agents_via_connection_server(connection, &app_state).await?;
+    let detected =
+        crate::acp::manager::query_detect_installed_via_server(connection, &app_state).await?;
+    Ok(agents
+        .into_iter()
+        .map(|a| TeamProvider {
+            installed: detected.agents.iter().any(|d| d.agent_id == a.id),
+            id: a.id,
+            name: a.name,
+        })
+        .collect())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn confirm_custom_project(

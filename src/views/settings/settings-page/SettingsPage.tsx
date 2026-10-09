@@ -236,7 +236,7 @@ function ProjectScopePane({
             agentsLoading={agentsLoading}
             connection={connection}
           />
-          <AgentTeamSection projectId={projectId} />
+          <AgentTeamSection projectId={projectId} connection={connection} />
           <AgentProfilesSection
             projectId={projectId}
             agents={discovery?.agents ?? []}

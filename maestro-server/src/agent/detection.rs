@@ -16,6 +16,13 @@ struct AgentDetectionEntry {
 
 static DETECTION_TABLE: &[AgentDetectionEntry] = &[
     AgentDetectionEntry {
+        agent_id: "antigravity-acp",
+        tool_name: "Google Antigravity",
+        binary: Some("agy_acp_server"),
+        config_dir: None,
+        project_markers: &[],
+    },
+    AgentDetectionEntry {
         agent_id: "claude-acp",
         tool_name: "Claude Code",
         binary: Some("claude"),
@@ -251,6 +258,20 @@ pub async fn detect_installed_agents() -> DetectInstalledAgentsResponse {
         }
     }
 
+    for agent in crate::agent::registry::discover_agents(&crate::agent::registry::load_registry()) {
+        if std::path::Path::new(&agent.spawn_cmd).is_absolute()
+            && std::path::Path::new(&agent.spawn_cmd).is_file()
+            && !agents.iter().any(|a| a.agent_id == agent.id)
+        {
+            agents.push(DetectedAgentInfo {
+                agent_id: agent.id,
+                tool_name: agent.name,
+                binary_found: true,
+                binary_path: Some(agent.spawn_cmd),
+                config_dir_found: false,
+            });
+        }
+    }
     let all_checked_ids = DETECTION_TABLE
         .iter()
         .map(|e| e.agent_id.to_string())

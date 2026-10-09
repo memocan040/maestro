@@ -10,6 +10,10 @@ pub struct TeamMember {
     pub strengths: String,
     pub enabled: bool,
     pub orchestrator: bool,
+    #[serde(default)]
+    pub planner: bool,
+    #[serde(default)]
+    pub refiner: bool,
     pub worker: bool,
     pub reviewer: bool,
     pub max_sessions: usize,
@@ -55,6 +59,9 @@ pub enum OrchestrationOperation {
     Snapshot,
     SaveMember {
         member: TeamMember,
+    },
+    RemoveMember {
+        member_id: String,
     },
     CreateFeature {
         title: String,

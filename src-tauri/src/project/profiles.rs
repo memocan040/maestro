@@ -361,6 +361,23 @@ pub async fn save_agent_profiles(
     }
 
     let conn = git_conn(&app_state, project_id).await?;
+    let previous: ProfilesDocument = read_maestro_json(&conn, PROFILES_FILE).await;
+    if previous.profiles.iter().any(|p| !seen.contains(&p.id)) {
+        let snapshot = super::orchestration::orchestration(
+            app_state.clone(),
+            project_id,
+            serde_json::json!({"action":"snapshot"}),
+        )
+        .await?;
+        for member in snapshot.members {
+            if !seen.contains(&member.profile_id) {
+                return Err(format!(
+                    "Profile '{}' is used by team member '{}'. Reassign or remove the member first; deactivate it to retain history.",
+                    member.profile_id, member.name
+                ));
+            }
+        }
+    }
     crate::core::project_storage::ensure_project_storage(&conn).await?;
     write_maestro_json(&conn, PROFILES_FILE, &document).await
 }
@@ -397,7 +414,20 @@ pub async fn resolve_agent_profile(
         mode_ids,
         supports_effort,
     };
-    apply_capabilities(profile, &capabilities).map(Some)
+    let mut stage_profile = profile.clone();
+    stage_profile.role = role;
+    if role != AgentRole::Coder
+        && stage_profile
+            .permission_mode
+            .as_deref()
+            .is_some_and(|mode| !READ_ONLY_SAFE_MODES.contains(&mode))
+    {
+        stage_profile.permission_mode = ["readonly", "plan", "default"]
+            .into_iter()
+            .find(|mode| capabilities.mode_ids.iter().any(|id| id == mode))
+            .map(str::to_string);
+    }
+    apply_capabilities(&stage_profile, &capabilities).map(Some)
 }
 
 #[cfg(test)]

@@ -234,9 +234,42 @@ export function FeaturePanel({ projectId }: { projectId: number }) {
                 <div key={t.key} className="rounded border p-3 text-sm">
                   <strong>{t.title}</strong>
                   <p>
-                    {query.data?.members.find((m) => m.id === t.member_id)?.name} · Prerequisites:{" "}
-                    {t.depends_on?.join(", ") || "none"}
+                    {t.member_id
+                      ? query.data?.members.find((m) => m.id === t.member_id)?.name
+                      : "Automatic assignment"}{" "}
+                    · Prerequisites: {t.depends_on?.join(", ") || "none"}
                   </p>
+                  {feature.status === "AwaitingApproval" && (
+                    <label className="block mt-2">
+                      Worker assignment
+                      <select
+                        aria-label={`Worker assignment for ${t.title}`}
+                        className="ml-2 rounded border bg-background p-1"
+                        disabled={change.isPending}
+                        value={t.member_id}
+                        onChange={(e) =>
+                          run({
+                            action: "submit_plan",
+                            feature_id: feature.id,
+                            tasks: feature.plan.map((p) =>
+                              p.key === t.key ? { ...p, member_id: e.target.value } : p,
+                            ),
+                          })
+                        }
+                      >
+                        <option value="">Automatic</option>
+                        {query.data?.members
+                          .filter(
+                            (m) => m.enabled && m.worker && feature.allowed_members.includes(m.id),
+                          )
+                          .map((m) => (
+                            <option key={m.id} value={m.id}>
+                              Manual: {m.name}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                  )}
                   <p>{t.acceptance.join(" · ")}</p>
                 </div>
               ))}

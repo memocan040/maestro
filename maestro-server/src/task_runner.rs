@@ -235,7 +235,9 @@ pub(crate) fn begin(
 
     // Only a fixed limit defers; Auto at its limit starts anyway, as the app's `Warn` does. A
     // limit that cannot be read starts too: the claim below is what decides.
-    if request.respect_capacity {
+    let feature_task =
+        crate::orchestration::feature_for_task(conn, &project_path, task.id)?.is_some();
+    if request.respect_capacity || feature_task {
         if let Ok(status) = crate::pipeline_settings::capacity_status(conn) {
             let full = used_slots >= status.slots.max(0) as usize;
             if full && status.settings.concurrency_mode == ConcurrencyMode::Hard {
@@ -255,6 +257,16 @@ pub(crate) fn begin(
     }
 
     // A one-shot pick from the window wins over the profile's, and is not written anywhere.
+    if feature_task
+        && request
+            .agent_id
+            .as_ref()
+            .is_some_and(|id| Some(id.clone()) != profiles::agent_for(&project_path, &task, role))
+    {
+        return Err("Feature execution must use its assigned team profile"
+            .to_string()
+            .into());
+    }
     let agent = request
         .agent_id
         .clone()

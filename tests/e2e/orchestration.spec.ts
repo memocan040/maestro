@@ -100,6 +100,12 @@ describe("Custom orchestration in the real desktop app", function () {
           { id: "gui-planner", name: "GUI planner", role: "Planner", agent_id: "codex-acp" },
           { id: "gui-worker", name: "GUI worker", role: "Coder", agent_id: "claude-acp" },
           { id: "gui-reviewer", name: "GUI reviewer", role: "Reviewer", agent_id: "codex-acp" },
+          { id: "cursor-1", name: "Cursor one", role: "Coder", agent_id: "cursor" },
+          { id: "cursor-2", name: "Cursor two", role: "Coder", agent_id: "cursor" },
+          { id: "cursor-3", name: "Cursor three", role: "Coder", agent_id: "cursor" },
+          { id: "gemini", name: "Gemini member", role: "Coder", agent_id: "gemini" },
+          { id: "opencode", name: "OpenCode member", role: "Coder", agent_id: "opencode" },
+          { id: "agy", name: "AGY member", role: "Coder", agent_id: "antigravity-acp" },
         ],
       },
     });
@@ -130,8 +136,28 @@ describe("Custom orchestration in the real desktop app", function () {
     await click('[aria-label="Settings"]');
     await click("//*[@role='dialog']//button[normalize-space(.)='Agents']");
     await visible("Agent Team");
-    for (const name of ["GUI planner", "GUI worker", "GUI reviewer"]) {
-      await button(`Add ${name}`);
+    for (const [name, provider] of [
+      ["GUI planner", "codex-acp"],
+      ["GUI worker", "claude-acp"],
+      ["GUI reviewer", "codex-acp"],
+      ["Cursor one", "cursor"],
+      ["Cursor two", "cursor"],
+      ["Cursor three", "cursor"],
+      ["Gemini member", "gemini"],
+      ["OpenCode member", "opencode"],
+      ["AGY member", "antigravity-acp"],
+    ]) {
+      await button("+ Add Agent");
+      const role =
+        name === "GUI planner" ? "orchestrator" : name === "GUI reviewer" ? "reviewer" : "worker";
+      await click(`//select[@aria-label='Team provider']/option[@value='${provider}']`);
+      await click(`//select[@aria-label='Team profile']/option[normalize-space(.)='${name}']`);
+      await fill('[aria-label="Member name"]', name);
+      if (role !== "worker") {
+        await click('[aria-label="Team role worker"]');
+        await click(`[aria-label="Team role ${role}"]`);
+      }
+      await button("Save agent");
       await browser.waitUntil(async () => {
         const snapshot = await invoke<{ members: { name: string }[] }>("orchestration", {
           projectId,
@@ -168,6 +194,16 @@ describe("Custom orchestration in the real desktop app", function () {
       await click("[data-home-project] > button");
     }
     await visible("Features / New Feature", 120_000);
+    const restored = await invoke<{ members: { id: string; profile_id: string }[] }>(
+      "orchestration",
+      {
+        projectId,
+        operation: { action: "snapshot" },
+      },
+    );
+    expect(restored.members.length).toBe(9);
+    expect(new Set(restored.members.map((m) => m.id)).size).toBe(9);
+    expect(new Set(restored.members.map((m) => m.profile_id)).size).toBe(9);
     if (await browser.execute(() => !!document.querySelector('[role="dialog"]'))) {
       await closeDialog();
     }

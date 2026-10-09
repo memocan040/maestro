@@ -148,3 +148,86 @@ Abnahmeprojekt erzeugt. Der Plan wartet auf menschliche Freigabe. Projektpfad, F
 Fortsetzungsbefehle und offene Nachweise stehen in `custom-orchestration-progress.md`.
 Worker dürfen erst nach dieser Freigabe starten; jede spätere Integration benötigt eine
 weitere menschliche Freigabe des konkreten Ergebnisses.
+
+## Dynamische Agent-Teams (Protokoll 15)
+
+Unter Project Settings → Agents → Agent Team öffnet **+ Add Agent** einen Editor.
+Es gibt keine feste Mitgliederzahl oder vorgeschriebene Provider-Kombination.
+Der Registry-Picker enthält auch noch nicht eingerichtete Provider; `Setup required`
+ist kein Bereitschaftsnachweis. Drei Cursor-Mitglieder können drei unabhängige Profile
+besitzen. **Duplicate** kopiert Profil und Mitglied mit neuen UUIDs. Alternativ lässt
+sich ein vorhandenes Profil bewusst teilen; dessen Änderungen gelten dann für alle
+Mitglieder, die es referenzieren. Profile bleiben in `.maestro/profiles.json` die Quelle
+für Modell, Effort, Berechtigungen, Skills, MCP und Anweisungen.
+
+Orchestrator, Planner, Refiner, Worker und Reviewer sind kombinierbare Eigenschaften
+eines Mitglieds. Die tatsächliche Pipeline-Rolle wird beim Start aufgelöst; ein für
+Worker und Reviewer verwendetes Profil erhält für den Review eine vom Provider
+angebotene sichere Berechtigungsart. Das gespeicherte Worker-Profil bleibt erhalten.
+Ein fehlgeschlagener Capability-Probe löscht keine gespeicherten Einstellungen.
+**Test Connection** prüft Initialisierung und Session-Erstellung ohne LLM-Prompt.
+Eine gefundene EXE, eine Anmeldung und eine erfolgreiche Verbindung werden getrennt
+angezeigt; unbekannter Status ist kein erfolgreicher Test.
+
+Klassische Tasks behalten ihre Pipeline. Deren Stufenauswahl kann geeignete aktivierte
+Teammitglieder als Projektstandard verwenden. Im Feature-Plan lässt sich jeder Worker
+manuell wählen oder auf **Automatic** setzen. Der Daemon entscheidet bei menschlicher
+Planfreigabe nach erlaubten aktiven Workern, verfügbarer Mitgliedskapazität, passender
+Spezialisierung, Priorität und Auslastung. Er persistiert die konkrete Mitglieds-ID und
+das Profil im erzeugten Task. Ein späterer Start darf den zugewiesenen Provider nicht
+durch eine einmalige Agent-Auswahl überschreiben. Abhängigkeiten, Integrationsfreigaben,
+Feature-Limits und harte Maschinenkapazität bleiben serverseitige Startbedingungen.
+Reviewer benötigen eigene Sessions und zählen zur vorhandenen Kapazitätssteuerung.
+
+**Deactivate** erhält Verlauf und Profile. **Remove** löscht nur unreferenzierte
+Teammitglieder; bestehende Features/Tasks verhindern die Löschung mit einer sichtbaren
+Meldung. Profile werden nicht mitgelöscht. Bestehende Tasks behalten ihre beim Planen
+gespeicherte Profilzuordnung. Bei gemeinsam genutzten Profilen sind Session-Limits
+konservativ: aktive Pipeline-Sessions dieses Profils werden gemeinsam berücksichtigt.
+
+Die zusätzlichen Planner-/Refiner-Felder liegen im vorhandenen JSON-Team-Store und
+haben beim Lesen alter Mitglieder den Standard `false`. Bestehende SQLite-Migrationen,
+Tasks, Profile und Feature-Daten werden weder umgeschrieben noch neu initialisiert.
+Die neue Remove-/Provider-Schnittstelle erhöht die Protokollversion von 14 auf 15.
+TypeScript-Bindings werden ausschließlich aus den Rust-Modellen generiert.
+
+## Offizielles Google Antigravity ACP unter Windows
+
+Verwendet wird ausschließlich der vorhandene Registry-Eintrag `antigravity-acp`,
+Version 1.3.0, Windows x86_64. `agy` ist die separate CLI und kein ACP-Adapter.
+Das offizielle Registry-Archiv ist:
+
+`https://dl.google.com/agy-extensions/releases/windows/agy-acp-server-1.3.0-windows-x86_64.zip`
+
+Bei der lokalen Prüfung hatte es SHA-256
+`65215E0688681FA3116E048A9EAB27EF53AF1BBD6F3DA3F1C52BD4911D8B17F9`.
+Beide enthaltenen Programme (`agy_acp_server.exe`, `localharness_external.exe`)
+hatten gültige Windows-Authenticode-Signaturen von **Google LLC**. Nach dieser Prüfung
+wurden sie gemeinsam in folgenden separaten, versionierten Cache gelegt:
+
+`%USERPROFILE%\.maestro-custom\agent-binaries\antigravity-acp\1.3.0\`
+
+Der Registry-Resolver berücksichtigt vorhandene Binary-Downloads unter
+`~/.maestro-custom/agent-binaries/<registry-id>/<version>/<registry-command>`.
+Er lädt nichts automatisch herunter und ersetzt keine bestehende CLI. Bei einer neuen
+Registry-Version muss deren Archiv erneut unabhängig geprüft werden.
+
+`node scripts/verify-antigravity-acp.mjs` prüft das offizielle Programm direkt.
+Die echte Initialisierung bestand; es meldete Version 1.3.0, `loadSession: true`,
+Session-List/Resume, Bild-/Audio-Kontext und HTTP/SSE-MCP-Unterstützung.
+Die echte Daemon-Strecke (`verify-real-harnesses.mjs antigravity-acp`) meldete
+`auth_required`. `session/new` direkt lieferte Fehler **-32000 Authentication required**:
+Unter `~/.gemini/antigravity-acp/settings.json` ist keine Auth-Methode ausgewählt.
+Angeboten werden Google OAuth (`oauth-personal`), Gemini Enterprise, Gemini API Key
+und Agent Platform. Die Agent-Ansicht kann die vom offiziellen ACP-Server angebotene
+Anmeldung verwenden; vorhandene Kontodaten wurden nicht geändert oder importiert.
+
+Damit sind Binary-Herkunft, Signaturen, Auflösung und Initialisierung nachgewiesen.
+Session-Erstellung, Modelle/Effort, Prompt und tatsächlicher Reload bleiben bis zur
+Anmeldung ungeprüft. Die angekündigte Reload-Fähigkeit allein gilt nicht als Reload-Test.
+
+Neue reproduzierbare Prüfungen: Team-Editor-Tests, acht persistente Mitglieder im
+Daemon, automatische Zuordnung, sichere Entfernung und gemischte Worker/Reviewer-Rollen.
+`node scripts/verify-team-routing.mjs` ist ein ausdrücklich auszuführender echter
+Provider-Test in einem eigenen temporären Projekt und Daemon. Er berührt niemals
+das vorbereitete Drei-Task-Feature und integriert oder pusht keine Ergebnisse.

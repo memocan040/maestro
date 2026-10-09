@@ -31,6 +31,9 @@ vi.mock("@/services/project.service", () => ({
   useAgentProfilesQuery: () => ({ data: stored.current }),
   useSaveAgentProfilesMutation: () => ({ mutate: save }),
 }));
+vi.mock("@/services/orchestration.service", () => ({
+  useOrchestration: () => ({ data: { members: [] } }),
+}));
 
 /**
  * The probe's arguments, so the tests can assert that the model a profile names is what gets
@@ -298,23 +301,16 @@ describe("AgentProfilesSection", () => {
     expect(lastSaved().profiles![0]!.model).toBeNull();
   });
 
-  /**
-   * The accepted cost of the rule above, pinned here so it is a decision rather than a surprise.
-   * A probe that failed and one that came back empty are indistinguishable from the panel, so an
-   * agent that is unreachable *here* — SSH down, spawn timed out — clears the fields of the
-   * profiles naming it, for the whole team, since `profiles.json` is committed. The carve-out is
-   * the agent being absent entirely, covered below.
-   */
-  it("clears every unconfirmable field when the probe failed", () => {
+  it("preserves shared profile settings when a connection probe fails", () => {
     stored.current = oneCoder("opus", "auto", "high");
     probe.current = { data: undefined as never, isLoading: false, isSuccess: false, isError: true };
 
     renderSection();
 
-    const saved = lastSaved().profiles![0]!;
-    expect(saved.model).toBeNull();
-    expect(saved.permission_mode).toBeNull();
-    expect(saved.effort).toBeNull();
+    expect(save).not.toHaveBeenCalled();
+    expect(stored.current.profiles![0]!.model).toBe("opus");
+    expect(stored.current.profiles![0]!.permission_mode).toBe("auto");
+    expect(stored.current.profiles![0]!.effort).toBe("high");
   });
 
   /**

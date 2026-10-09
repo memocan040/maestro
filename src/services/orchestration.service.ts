@@ -3,6 +3,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { startTask, taskQueryKeys } from "@/services/task.service";
 
 import type { OrchestrationSnapshot } from "@/types/bindings";
+import type { ConnectionKey, TeamProvider } from "@/types/bindings";
+export function useTeamProviders(connection: ConnectionKey) {
+  return useQuery({
+    queryKey: ["teamProviders", connection],
+    queryFn: () => invoke<TeamProvider[]>("list_team_providers", { connection }),
+    staleTime: 30_000,
+  });
+}
 export type {
   TeamMember,
   PlannedTask,

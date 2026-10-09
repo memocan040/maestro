@@ -185,6 +185,14 @@ async orchestration(projectId: number, operation: JsonValue) : Promise<Result<Or
     else return { status: "error", error: e  as any };
 }
 },
+async listTeamProviders(connection: ConnectionKey) : Promise<Result<TeamProvider[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("list_team_providers", { connection }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async confirmCustomProject(projectId: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("confirm_custom_project", { projectId }) };
@@ -4299,7 +4307,8 @@ export type TaskPhase = "Spawning" | "Refining" | "Drafting" | "PlanReview" | "I
 export type TaskPriority = "Urgent" | "High" | "Medium" | "Low" | "None"
 export type TaskRelationship = { id: number; from_task_id: number; to_task_id: number; relationship_type: string; created_at: string }
 export type TaskStatus = "Planning" | "Queue" | "InProgress" | "Review" | "Done" | "Cancelled"
-export type TeamMember = { id: string; profile_id: string; name: string; strengths: string; enabled: boolean; orchestrator: boolean; worker: boolean; reviewer: boolean; max_sessions: number; priority: number }
+export type TeamMember = { id: string; profile_id: string; name: string; strengths: string; enabled: boolean; orchestrator: boolean; planner?: boolean; refiner?: boolean; worker: boolean; reviewer: boolean; max_sessions: number; priority: number }
+export type TeamProvider = { id: string; name: string; installed: boolean }
 export type Template = { id: number; name: string; 
 /**
  * A topic the user files it under, shown on its card and searched.

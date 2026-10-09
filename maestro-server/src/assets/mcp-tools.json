@@ -660,7 +660,8 @@
                   }
                 },
                 "member_id": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "Manual: stable enabled worker member ID. Automatic: empty string; the daemon resolves and persists a suitable allowed worker at human plan approval."
                 },
                 "depends_on": {
                   "type": "array",

@@ -291,8 +291,8 @@ fn validate_plan(
         {
             return Err("Each task needs a title, instructions and acceptance criteria".into());
         }
-        let m = member(conn, project, &t.member_id)?;
-        if !m.worker || !f.allowed_members.contains(&t.member_id) {
+        let m = assigned_worker(conn, project, f, t)?;
+        if !m.worker || !f.allowed_members.contains(&m.id) {
             return Err("Task assigned to a disallowed worker".into());
         }
         profile(project, &m)?;
@@ -330,6 +330,34 @@ fn validate_plan(
         )?;
     }
     Ok(())
+}
+
+// An empty member_id explicitly requests automatic selection. Concrete IDs remain manual.
+fn assigned_worker(
+    conn: &Connection,
+    project: &str,
+    f: &Feature,
+    task: &PlannedTask,
+) -> Result<TeamMember, String> {
+    if !task.member_id.is_empty() {
+        return member(conn, project, &task.member_id);
+    }
+    let requirements = format!("{} {}", task.title, task.instructions).to_lowercase();
+    let mut candidates = bodies::<TeamMember>(conn, "agent_team", project)?
+        .into_iter()
+        .filter(|m| m.enabled && m.worker && f.allowed_members.contains(&m.id))
+        .filter(|m| profile(project, m).is_ok())
+        .map(|m| {
+            let active: i64 = conn.query_row("SELECT COUNT(*) FROM feature_tasks f JOIN tasks t ON t.project_path=f.project_path AND t.id=f.task_id WHERE f.project_path=?1 AND f.member_id=?2 AND t.phase_status IN ('Running','Blocked')", params![project,m.id], |r|r.get(0)).map_err(|e|e.to_string())?;
+            let matches = m.strengths.to_lowercase().split(|c: char| !c.is_alphanumeric()).filter(|word| word.len() >= 3 && requirements.contains(word)).count();
+            Ok((active >= m.max_sessions as i64, std::cmp::Reverse(matches), std::cmp::Reverse(m.priority), active, m.id.clone(), m))
+        }).collect::<Result<Vec<_>, String>>()?;
+    candidates.sort_by(|a, b| (&a.0, &a.1, &a.2, &a.3, &a.4).cmp(&(&b.0, &b.1, &b.2, &b.3, &b.4)));
+    candidates
+        .into_iter()
+        .next()
+        .map(|c| c.5)
+        .ok_or_else(|| "No enabled allowed worker profile for automatic assignment".into())
 }
 
 pub fn snapshot(conn: &Connection, project: &str) -> Result<Value, String> {
@@ -394,6 +422,25 @@ pub fn answer(
             }
             profile(project, &m)?;
             tx.execute("INSERT INTO agent_team(project_path,id,body) VALUES (?1,?2,?3) ON CONFLICT(project_path,id) DO UPDATE SET body=excluded.body", params![project,m.id,serde_json::to_string(&m).map_err(|e| e.to_string())?]).map_err(|e| e.to_string())?;
+        }
+        Operation::RemoveMember { member_id } => {
+            if actor.is_some() {
+                return Err("Only the user can edit the team".into());
+            }
+            let referenced = features(&tx, project)?.iter().any(|f| {
+                f.orchestrator_member == member_id
+                    || f.allowed_members.contains(&member_id)
+                    || f.plan.iter().any(|t| t.member_id == member_id)
+            });
+            let assigned: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM feature_tasks WHERE project_path=?1 AND member_id=?2)",params![project,member_id],|r|r.get(0)).map_err(|e|e.to_string())?;
+            if referenced || assigned {
+                return Err("This member is referenced by saved features or tasks. Deactivate it instead; history and sessions are preserved.".into());
+            }
+            tx.execute(
+                "DELETE FROM agent_team WHERE project_path=?1 AND id=?2",
+                params![project, member_id],
+            )
+            .map_err(|e| e.to_string())?;
         }
         Operation::CreateFeature {
             title,
@@ -484,8 +531,10 @@ pub fn answer(
             }
             validate_plan(&tx, project, &f, &f.plan)?;
             let mut ids = std::collections::HashMap::new();
-            for t in &f.plan {
-                let m = member(&tx, project, &t.member_id)?;
+            let mut resolved_plan = f.plan.clone();
+            for t in &mut resolved_plan {
+                let m = assigned_worker(&tx, project, &f, t)?;
+                t.member_id = m.id.clone();
                 let p = profile(project, &m)?;
                 let instructions = format!(
                     "{}\n\nAcceptance criteria:\n{}\n\nFeature goal: {}",
@@ -524,6 +573,7 @@ pub fn answer(
                 ids.insert(t.key.clone(), task);
                 f.task_ids.push(task);
             }
+            f.plan = resolved_plan;
             for t in &f.plan {
                 for dep in &t.depends_on {
                     crate::task_store::add_relationship(
@@ -984,6 +1034,8 @@ mod tests {
                         strengths: String::new(),
                         enabled: true,
                         orchestrator,
+                        planner: false,
+                        refiner: false,
                         worker,
                         reviewer: false,
                         max_sessions: 2,
@@ -1026,6 +1078,127 @@ mod tests {
     }
 
     #[test]
+    fn eight_members_share_a_provider_with_independent_profiles_and_survive_reopen() {
+        let (directory, mut conn, path) = fixture();
+        let profiles = (0..8).map(|i| json!({"id":format!("profile-{i}"),"name":format!("Profile {i}"),"agent_id":"cursor","role":"Coder","model":format!("model-{i}")})).collect::<Vec<_>>();
+        std::fs::write(
+            directory.path().join(".maestro/profiles.json"),
+            json!({"profiles":profiles}).to_string(),
+        )
+        .unwrap();
+        for i in 0..8 {
+            let member = TeamMember {
+                id: format!("member-{i}"),
+                profile_id: format!("profile-{i}"),
+                name: format!("Member {i}"),
+                strengths: String::new(),
+                enabled: true,
+                orchestrator: i == 0,
+                planner: i == 0,
+                refiner: false,
+                worker: true,
+                reviewer: true,
+                max_sessions: 1,
+                priority: i,
+            };
+            answer(&mut conn, &path, Operation::SaveMember { member }, None).unwrap();
+        }
+        drop(conn);
+        let conn = crate::project_store::open(directory.path()).unwrap();
+        let members = bodies::<TeamMember>(&conn, "agent_team", &path).unwrap();
+        assert_eq!(
+            members
+                .iter()
+                .filter(|m| m.id.starts_with("member-"))
+                .count(),
+            8
+        );
+        for i in 0..8 {
+            let m = member(&conn, &path, &format!("member-{i}")).unwrap();
+            assert_eq!(
+                profile(&path, &m).unwrap().model,
+                Some(format!("model-{i}"))
+            );
+        }
+    }
+
+    #[test]
+    fn automatic_assignment_is_persisted_and_used_instead_of_pipeline_defaults() {
+        let (_dir, mut conn, path) = fixture();
+        let mut f = features(&conn, &path).unwrap().remove(0);
+        let mut tasks = plan();
+        for t in &mut tasks {
+            t.member_id.clear();
+        }
+        answer(
+            &mut conn,
+            &path,
+            Operation::SubmitPlan {
+                feature_id: f.id.clone(),
+                tasks,
+            },
+            None,
+        )
+        .unwrap();
+        answer(
+            &mut conn,
+            &path,
+            Operation::ApprovePlan {
+                feature_id: f.id.clone(),
+            },
+            None,
+        )
+        .unwrap();
+        f = feature(&conn, &path, &f.id).unwrap();
+        assert!(f.plan.iter().all(|t| t.member_id == "worker"));
+        let task = crate::task_store::get(&conn, &path, f.task_ids[0])
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            crate::profiles::agent_for(&path, &task, maestro_protocol::AgentRole::Coder),
+            Some("agent-b".into())
+        );
+        assert!(answer(
+            &mut conn,
+            &path,
+            Operation::RemoveMember {
+                member_id: "worker".into()
+            },
+            None
+        )
+        .unwrap_err()
+        .contains("Deactivate"));
+        assert_eq!(feature(&conn, &path, &f.id).unwrap().task_ids.len(), 3);
+    }
+
+    #[test]
+    fn unreferenced_member_can_be_removed_but_workers_cannot_edit_the_team() {
+        let (_dir, mut conn, path) = fixture();
+        let mut m = member(&conn, &path, "worker").unwrap();
+        m.id = "unused".into();
+        answer(&mut conn, &path, Operation::SaveMember { member: m }, None).unwrap();
+        assert!(answer(
+            &mut conn,
+            &path,
+            Operation::RemoveMember {
+                member_id: "unused".into()
+            },
+            Some(1)
+        )
+        .is_err());
+        answer(
+            &mut conn,
+            &path,
+            Operation::RemoveMember {
+                member_id: "unused".into(),
+            },
+            None,
+        )
+        .unwrap();
+        assert!(member(&conn, &path, "unused").is_err());
+    }
+
+    #[test]
     fn reviewers_and_orchestrators_share_their_profile_capacity_during_spawn() {
         let (_dir, mut conn, path) = fixture();
         let mut f = features(&conn, &path).unwrap().remove(0);
@@ -1049,6 +1222,8 @@ mod tests {
                     strengths: String::new(),
                     enabled: true,
                     orchestrator: false,
+                    planner: false,
+                    refiner: false,
                     worker: false,
                     reviewer: true,
                     max_sessions: 1,
