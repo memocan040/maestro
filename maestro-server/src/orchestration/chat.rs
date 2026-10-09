@@ -354,6 +354,7 @@ pub fn pending(conn: &Connection) -> Result<Vec<(String, i32)>, String> {
 }
 
 pub fn reconcile(conn: &Connection) -> Result<(), String> {
+    conn.execute("UPDATE feature_chat_starts SET state='Uncertain' WHERE state='Active' AND EXISTS(SELECT 1 FROM tasks t WHERE t.project_path=feature_chat_starts.project_path AND t.id=feature_chat_starts.task_id AND t.phase_status='Failed')",[]).map_err(|e|e.to_string())?;
     let mut stmt=conn.prepare("SELECT c.project_path,c.task_id,c.discussion_id,t.phase_status FROM feature_consultations c JOIN tasks t ON t.project_path=c.project_path AND t.id=c.task_id WHERE (c.state='Starting' AND t.phase_status='Failed') OR c.state='Uncertain'").map_err(|e|e.to_string())?;
     let rows = stmt
         .query_map([], |r| {
@@ -439,6 +440,34 @@ mod tests {
         )
         .unwrap();
         assert_eq!(feature(&conn, &path, &f.id).unwrap().status, "Blocked");
+    }
+    #[test]
+    fn failed_initial_chat_requires_explicit_retry_instead_of_another_paid_start() {
+        let (_dir, mut conn, path) = super::super::tests::fixture();
+        let f = features(&conn, &path).unwrap().remove(0);
+        super::super::answer(
+            &mut conn,
+            &path,
+            message(&f, "question", "Question", "failure", None),
+            None,
+        )
+        .unwrap();
+        claim_start(&conn, &path, f.orchestrator_task).unwrap();
+        conn.execute("UPDATE tasks SET phase='Drafting',phase_status='Failed' WHERE project_path=?1 AND id=?2",params![path,f.orchestrator_task]).unwrap();
+        reconcile(&conn).unwrap();
+        assert!(pending(&conn).unwrap().is_empty());
+        let snap = super::super::snapshot(&conn, &path).unwrap();
+        assert_eq!(snap["messages"][0]["state"], "Submitted");
+        super::super::answer(
+            &mut conn,
+            &path,
+            Operation::RetryMessage {
+                message_id: snap["messages"][0]["id"].as_str().unwrap().into(),
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(pending(&conn).unwrap(), vec![(path, f.orchestrator_task)]);
     }
     #[tokio::test]
     async fn busy_and_offline_sessions_buffer_messages_and_uncertain_work_is_not_replayed() {
