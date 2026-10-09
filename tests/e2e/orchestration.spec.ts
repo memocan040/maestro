@@ -1,0 +1,187 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
+function invoke<T>(command: string, args: Record<string, unknown>): Promise<T> {
+  return browser.execute(
+    (name, payload) =>
+      (window as unknown as { __TAURI__: { core: { invoke: Function } } }).__TAURI__.core.invoke(
+        name,
+        payload,
+      ),
+    command,
+    args,
+  ) as Promise<T>;
+}
+
+// Native W3C commands avoid the external service's embedded-plugin focus helper.
+async function nativeRequest(path: string, body: unknown) {
+  const options = browser.options;
+  const response = await fetch(
+    `${options.protocol}://${options.hostname}:${options.port}/session/${browser.sessionId}/${path}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15_000),
+    },
+  );
+  const result = await response.json();
+  if (result.value?.error) throw new Error(result.value.message);
+  return result.value;
+}
+async function element(selector: string) {
+  const result = await nativeRequest("element", {
+    using: selector.startsWith("//") ? "xpath" : "css selector",
+    value: selector,
+  });
+  return result["element-6066-11e4-a52e-4f735466cecf"] as string;
+}
+async function click(selector: string) {
+  await nativeRequest(`element/${await element(selector)}/click`, {});
+}
+async function button(text: string) {
+  await click(`//button[normalize-space(.)='${text}']`);
+}
+async function fill(selector: string, text: string) {
+  const id = await element(selector);
+  await nativeRequest(`element/${id}/clear`, {});
+  await nativeRequest(`element/${id}/value`, { text });
+}
+async function visible(text: string, timeout = 15_000) {
+  await browser.waitUntil(
+    () => browser.execute((value) => document.body.innerText.includes(value), text),
+    { timeout },
+  );
+}
+
+async function closeDialog() {
+  await browser.keys("Escape");
+  await browser.waitUntil(() =>
+    browser.execute(() => !document.querySelector('[data-slot="dialog-overlay"]')),
+  );
+}
+
+describe("Custom orchestration in the real desktop app", function () {
+  this.timeout(600_000);
+  let projectId: number;
+
+  before(async () => {
+    const path = join(process.env.MAESTRO_E2E_DATA_DIR!, "orchestration-demo");
+    mkdirSync(path);
+    execFileSync("git", ["init", "-b", "main", path]);
+    writeFileSync(join(path, "README.md"), "# Isolated Maestro Custom GUI acceptance project\n");
+    execFileSync("git", ["-C", path, "add", "README.md"]);
+    execFileSync("git", [
+      "-C",
+      path,
+      "-c",
+      "user.name=Maestro E2E",
+      "-c",
+      "user.email=e2e@example.invalid",
+      "commit",
+      "-m",
+      "Initial fixture",
+    ]);
+    const project = await invoke<{ id: number }>("create_project", {
+      path: path.replaceAll("\\", "/"),
+      connection: { type: "local" },
+    });
+    projectId = project.id;
+    const settings = await invoke<Record<string, unknown>>("get_settings", {});
+    await invoke("save_settings", { settings: { ...settings, reduce_motion: true } });
+    // Native directory pickers cannot be driven by WebDriver. Prepare only the
+    // fixture/profiles through IPC; all team and feature actions below use real GUI controls.
+    await invoke("save_agent_profiles", {
+      projectId,
+      document: {
+        profiles: [
+          { id: "gui-planner", name: "GUI planner", role: "Planner", agent_id: "codex-acp" },
+          { id: "gui-worker", name: "GUI worker", role: "Coder", agent_id: "claude-acp" },
+          { id: "gui-reviewer", name: "GUI reviewer", role: "Reviewer", agent_id: "codex-acp" },
+        ],
+      },
+    });
+    await browser.refresh();
+    await visible("orchestration-demo");
+    await click("[data-home-project] > button");
+    await visible("Features / New Feature");
+  });
+
+  afterEach(async function () {
+    if (this.currentTest?.state === "failed") {
+      await browser.saveScreenshot(join(tmpdir(), "maestro-custom-gui-failure.png"));
+      console.log(
+        "GUI failure state:",
+        await browser.execute(() => document.body.innerText.slice(0, 6000)),
+      );
+    }
+  });
+
+  it("opens Agent Team, adds profiles, creates a feature and preserves it after app restart", async () => {
+    if (await browser.execute(() => !!document.querySelector('[role="dialog"]'))) {
+      console.log(
+        "Project opening dialog:",
+        await browser.execute(() => document.querySelector('[role="dialog"]')?.textContent),
+      );
+      await closeDialog();
+    }
+    await click('[aria-label="Settings"]');
+    await click("//*[@role='dialog']//button[normalize-space(.)='Agents']");
+    await visible("Agent Team");
+    for (const name of ["GUI planner", "GUI worker", "GUI reviewer"]) {
+      await button(`Add ${name}`);
+      await browser.waitUntil(async () => {
+        const snapshot = await invoke<{ members: { name: string }[] }>("orchestration", {
+          projectId,
+          operation: { action: "snapshot" },
+        });
+        return snapshot.members.some((member) => member.name === name);
+      });
+    }
+    await browser.saveScreenshot(join(tmpdir(), "maestro-custom-agent-team.png"));
+    await closeDialog();
+    await button("Features / New Feature");
+    await fill('[aria-label="Feature title"]', "GUI verified feature");
+    await fill(
+      '[aria-label="Feature goal"]',
+      "Verify the real desktop feature workflow entry point",
+    );
+    await fill(
+      '[aria-label="Acceptance criteria"]',
+      "State survives app restart\nHuman approvals remain required",
+    );
+    await click("//select/option[normalize-space(.)='GUI planner']");
+    await button("Create feature");
+    await visible("GUI verified feature · Planning");
+    await visible("Start planning");
+    await browser.saveScreenshot(join(tmpdir(), "maestro-custom-feature.png"));
+    // Do not start paid/provider work in this GUI-entry test. Real harness acceptance
+    // is a separate lane; creating a feature alone must never start its orchestrator.
+    await browser.reloadSession();
+    await browser.waitUntil(() => browser.execute(() => document.readyState === "complete"));
+    if (
+      !(await browser.execute(() => document.body.innerText.includes("Features / New Feature")))
+    ) {
+      await visible("orchestration-demo");
+      await click("[data-home-project] > button");
+    }
+    await visible("Features / New Feature", 120_000);
+    if (await browser.execute(() => !!document.querySelector('[role="dialog"]'))) {
+      await closeDialog();
+    }
+    await button("Features / New Feature");
+    await button("GUI verified feature · Planning");
+    expect(await browser.execute(() => document.body.innerText)).toContain("GUI verified feature");
+    await visible("Start planning");
+    await button("cancel");
+    await visible("GUI verified feature · Cancelled");
+    await closeDialog();
+    await visible("Features / New Feature");
+  });
+
+  after(async () => {
+    if (projectId) await invoke("delete_project", { projectId });
+  });
+});

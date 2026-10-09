@@ -78,3 +78,57 @@ Installer: `target/release/bundle/nsis/Maestro Custom_0.35.1_x64-setup.exe`, SHA
 Logs des aktuellen Laufs liegen unter `%TEMP%/maestro-custom-*.log`, insbesondere `release2`, `e2e-build`, `rust-verified`, `rust-complete-check`, `tauri-verified`, `vitest-final`, `basis-test`, `mcp-gates`, `check-final`. Keine Credentials in Logs schreiben. Globale Custom-Daten nicht als Testdaten löschen. Zwei ältere temporäre Testverzeichnisse (`%TEMP%/maestro-e2e-xaX7qW` und `maestro-e2e-JxRL9c`) können noch bestehen; ihre Test-Daemons sind beendet. Die automatische Freigabeprüfung blockierte das manuelle Löschen des ersten Verzeichnisses ohne nähere Begründung. Der letzte E2E-Cleanup bestand.
 
 Codegraph-Tool war in dieser Sitzung nicht verfügbar; vor einer Fortsetzung erneut verfügbare Tools prüfen. Repository-/Domain-`AGENTS.md` und `docs/automations-plan.md` beachten. Migrationen anhängen, Bindings generieren, keine `CLAUDE.md` hinzufügen.
+
+# Fortsetzung 09.10.2026: Desktop und Kommunikation
+
+Die vorhandene Installation ist weiter nutzbar; sie wurde nicht erneut installiert.
+Startmenü: **Maestro Custom**, Ziel
+`C:\Users\mehme\AppData\Local\MaestroCustomVerification\maestro.exe`.
+Installierte App und **Maestro Custom – Dev** wurden tatsächlich gleichzeitig gestartet.
+Desktop-/Startmenü-Verknüpfungen für Dev und Update sind eingerichtet.
+`scripts/Setup-MaestroCustomShortcuts.ps1` stellt sie bei Bedarf wieder her.
+
+Dev nutzt `.maestro/custom-dev-data` mit eigenem Daemon und Binärcache. Vite-HMR
+für die sichtbare Custom-Bezeichnung und Tauri-Rust-Neukompilierung wurden im laufenden
+Dev-Log nachgewiesen. Der Daemon-Watcher baut geänderte Quellen, fragt bei offenen
+Sessions/Automationen vor dem Austausch und erhält bei Fehlern die bisherigen Assets.
+Windows-Probleme beim Beobachten von `target/debug/*.dll`, mehrfachen gleichzeitigen
+Starts, abgestürzten Daemon-Runtime-Dateien und bereits beendeten `taskkill`-Kindprozessen
+sind berücksichtigt. Ein noch laufendes Testprogramm kann unter Windows die Debug-Exe
+gegen Neubauen sperren; die echten Harness-Tests verwenden deshalb eine isolierte Kopie.
+
+`bun run custom:build` baut nur den Installer; `custom:update` fragt nach erfolgreichem
+Build und SHA-256-Anzeige ausdrücklich vor Installation und Session-Unterbrechung.
+Ein neuer Release-Build läuft in dieser Fortsetzung; sein Ergebnis erst nach erfolgreichem
+Abschluss und GUI-Test als neues verifiziertes Artefakt bezeichnen.
+
+Bestanden in dieser Fortsetzung:
+
+- Echter Windows-GUI-Test gegen die installierte Anwendung: drei Profile als Teammitglieder,
+  Feature-Erstellung, App-Prozessneustart, gespeichertes Feature wieder öffnen und abbrechen.
+  Log: `%TEMP%/maestro-custom-gui-orchestration7.log`. Screenshots: `maestro-custom-agent-team.png`
+  und `maestro-custom-feature.png` im TEMP-Verzeichnis. Kein bezahlter Feature-Turn in diesem Test.
+- Vier Node-Tests für authentifizierte Daemon-Frames, fragmentierte Antworten, Pushes,
+  Verbindungsverlust und oversized Frames. Aufruf: `node --test scripts/custom-desktop.test.mjs`.
+- Frontend: 1573 Tests / 157 Dateien. Lint: nur die vier vorher bekannten React-Purity-Warnungen.
+- Daemon nach Worker-Kontext-/Review-Gate-Ergänzungen: 390 Unit-Tests, 62 Protokolltests,
+  16 vorhandene Wire-Integrationstests. Nachfolgende Änderungen separat erneut prüfen.
+
+Erste reale ACP-Probe: Codex und Cursor initialisierten und antworteten mit `end_turn`.
+Claude ist angemeldet, traf aber unmittelbar nach `SpawnOk` auf `unknown session`.
+Die Ursache ist die Antwort vor Registrierung im Dispatch-Loop; Spawn und Reload werden
+auf die vorhandene Settle-Strecke umgestellt. Ein deterministischer Fake-ACP-Wire-Test
+prüft 20 sofortige Spawn-/Prompt- und Reload-/Prompt-Paare. Die zweite reale Probe läuft;
+die Antwortvalidierung zählt ausschließlich Agent-Chunks, niemals die Benutzeranweisung.
+
+Worker-/Reviewer-Prompts erhalten jetzt Feature-ID, Ziel, Akzeptanz und MCP-Anweisungen
+für Rückfragen, Feedback und Acknowledgements in derselben Session. Ein unlesbares Review
+eines Feature-Tasks wird als fehlgeschlagener Review behandelt; es gibt weder Freigabe noch
+eine auf Verdacht bezahlte Korrekturrunde. Legacy-Task-Verhalten bleibt erhalten.
+
+Weiter offen: vollständiger mehrstufiger ACP-Feature-Lauf mit echten unterschiedlichen
+Workern, unabhängiger Review-Korrekturschleife, Rückfrage/Antwort und Wiederaufnahme nach
+Daemon-Neustart; konfigurierbare Ausführungsbudgets, Dormant-Session-Kommunikation und die
+weiter unten aufgeführten Grenzen. Drei Connectivity-Proben allein sind kein vollständiger
+Multi-Agent-Workflow-Nachweis. Der Branch ist remote nicht vorhanden; es wurde nichts gepusht.
+Die früher blockierten temporären Verzeichnisse wurden nicht manuell gelöscht.

@@ -80,3 +80,55 @@ Persistenztests beweisen gespeicherte Daten und idempotente Plan-/Nachrichtenope
 ## Konfliktanfällige Upstream-Bereiche
 
 Bei Upstream-Merges besonders prüfen: `task_store`/Lifecycle-Guards und Queue-SQL, `task_runner`/`task_turn`, ACP-Verbindungs-Pooling und Recovery, MCP-Manifest/Gateway, Protokoll-Enums, Daemon-Migrationen, Tauri-Command-Registrierung/Bindings, Git-Merge-Finalisierung, Deployment/Updater sowie Kanban-/Settings-Einbindung. Neue Migrationen immer anhängen; keine ausgelieferte Migration bearbeiten. Bindings nach dem Merge neu generieren und beide Formatprüfungen ausführen.
+
+# Windows: installierte App und Live-Entwicklung
+
+Die bereits geprüfte Installation startet über **Maestro Custom** im Startmenü.
+Ihr tatsächlicher Pfad auf diesem Rechner ist
+`C:\Users\mehme\AppData\Local\MaestroCustomVerification\maestro.exe`.
+Eine erneute Installation ist für die Entwicklung nicht nötig.
+
+**Maestro Custom - Dev** auf Desktop und im Startmenü startet aus diesem Repository:
+
+```powershell
+bun run custom:dev
+```
+
+Vite übernimmt React-, TypeScript- und CSS-Änderungen per HMR. Tauri kompiliert
+Rust-Änderungen und startet die Dev-App neu. Der Launcher baut Änderungen in
+`maestro-server`, `maestro-protocol` und den Workspace-Cargo-Dateien, vergleicht die
+gebauten Daemon-Assets und startet nur die Dev-App und ihren Daemon neu. Bei offenen
+Sessions oder Automationen erscheint vorher eine Bestätigung. Ein unbekannter
+Daemon-Zustand zählt nicht als sicher. Bei Ablehnung läuft der bisherige Daemon
+weiter; eine weitere Quelländerung oder ein späterer Dev-Start kann den Build übernehmen.
+Der Tauri-Watcher selbst bleibt für Rust-App-Änderungen zuständig.
+
+Dev-Daten, Daemon, Binärcache, gestagte Assets und Logs liegen unter
+`.maestro/custom-dev-data` im Repository. Die installierte App nutzt ihren eigenen
+Custom-Datenordner. Die beiden können parallel laufen. Projektbezogene `.maestro`
+Dateien bleiben gemeinsame Projektdaten: für unabhängige Tests eigene Projekte verwenden.
+Ein zweiter Dev-Start eröffnet keine zweite Watcher-Instanz. Buildfehler erscheinen
+als Windows-Meldung; Details stehen in `.maestro/custom-dev-data/dev.log`.
+
+**Maestro Custom - Update** baut den aktuellen Release-Installer, prüft den
+Build-Erfolg und zeigt Pfad und SHA-256 vor der Installationsfrage. Erst nach **Ja**
+schließt es die installierte Custom-App, beendet ihren Daemon und installiert in
+deren vorhandenes Verzeichnis. Diese Freigabe warnt ausdrücklich vor dem Abbruch
+laufender Sessions. Bei **Nein** bleibt nur der neue Installer zur späteren Nutzung.
+
+```powershell
+bun run custom:build   # Installer bauen, ohne Installation oder Rückfrage
+bun run custom:update  # Bauen, dann Installation ausdrücklich bestätigen
+powershell -NoProfile -File scripts/Setup-MaestroCustomShortcuts.ps1
+```
+
+Der Installer liegt unter `target/release/bundle/nsis/Maestro Custom_0.35.1_x64-setup.exe`.
+Die Release-Strecke baut ohne `wdio`. Ein Release ignoriert den ausschließlich für
+Debug-Builds geltenden `MAESTRO_CUSTOM_SERVER_DIR`-Override. Der Binärcache prüft
+zusätzlich die tatsächlichen Bytes: Änderungen mit derselben Paket-/Protokollversion
+werden nicht durch einen alten Cache verdeckt.
+
+Ein echter Windows-GUI-Test in `tests/e2e/orchestration.spec.ts` hat Team-Zuordnung,
+Feature-Erstellung, erhaltenen Zustand nach App-Neustart und Abbruch gegen die
+installierte Anwendung geprüft. Dieser Test startet keine bezahlten Agent-Turns und
+ist kein Nachweis des vollständigen Orchestrator-/Worker-/Review-Ablaufs.

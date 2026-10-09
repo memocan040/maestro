@@ -539,10 +539,17 @@ async fn ensure_cached_binary(
     if dest.exists() {
         if let Some(cached_version) = check_cached_version(&dest).await {
             if cached_version == local_version {
-                if let Some(id) = emit_connection_id {
-                    emit_status(app_handle, id, "up-to-date", None);
+                // Local custom builds can change without a version bump. A matching
+                // version alone must not leave the previous executable in the cache.
+                let source = source_server_binary(app_handle, triple)?;
+                let unchanged = tokio::fs::read(&source).await.map_err(|e| e.to_string())?
+                    == tokio::fs::read(&dest).await.map_err(|e| e.to_string())?;
+                if unchanged {
+                    if let Some(id) = emit_connection_id {
+                        emit_status(app_handle, id, "up-to-date", None);
+                    }
+                    return Ok(dest);
                 }
-                return Ok(dest);
             }
         }
     }
@@ -567,11 +574,14 @@ fn deployment_version() -> String {
 }
 
 fn cached_binary_path(app_handle: &AppHandle, triple: &str) -> Result<std::path::PathBuf, String> {
-    let dir = app_handle
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Cannot resolve app data dir: {}", e))?
-        .join("bin");
+    let dir = match app_handle.try_state::<std::sync::Arc<crate::core::AppState>>() {
+        Some(state) => state.app_data_dir.join("bin"),
+        None => app_handle
+            .path()
+            .app_data_dir()
+            .map_err(|e| format!("Cannot resolve app data dir: {}", e))?
+            .join("bin"),
+    };
     std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot create server cache dir: {}", e))?;
     Ok(dir.join(asset_filename(triple)))
 }
@@ -721,11 +731,7 @@ async fn sweep_stale_binaries(dir: &std::path::Path) {
     }
 }
 
-async fn stage_server_binary(
-    app: &AppHandle,
-    triple: &str,
-    dest: &std::path::Path,
-) -> Result<(), String> {
+fn source_server_binary(app: &AppHandle, triple: &str) -> Result<std::path::PathBuf, String> {
     let filename = asset_filename(triple);
     let resource = app
         .path()
@@ -733,7 +739,15 @@ async fn stage_server_binary(
         .map_err(|e| e.to_string())?
         .join("server-assets")
         .join(&filename);
-    let source = if resource.is_file() {
+    #[cfg(debug_assertions)]
+    let dev_source = std::env::var("MAESTRO_CUSTOM_SERVER_DIR")
+        .ok()
+        .map(|directory| std::path::PathBuf::from(directory).join(&filename));
+    #[cfg(not(debug_assertions))]
+    let dev_source: Option<std::path::PathBuf> = None;
+    let source = if let Some(dev_source) = dev_source {
+        dev_source
+    } else if resource.is_file() {
         resource
     } else {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -743,6 +757,15 @@ async fn stage_server_binary(
     if !source.is_file() {
         return Err(format!("Custom daemon {filename} is not bundled. Run bun run server:bundle; remote targets require their own compiled asset. Official binaries are never downloaded."));
     }
+    Ok(source)
+}
+
+async fn stage_server_binary(
+    app: &AppHandle,
+    triple: &str,
+    dest: &std::path::Path,
+) -> Result<(), String> {
+    let source = source_server_binary(app, triple)?;
     if check_cached_version(&source).await.as_deref() != Some(deployment_version().as_str()) {
         return Err("Bundled custom daemon version does not match this app".into());
     }
