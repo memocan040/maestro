@@ -29,6 +29,7 @@ mod mcp_config;
 mod mcp_gateway;
 mod mcp_stdio;
 mod mcp_store;
+mod orchestration;
 mod pipeline_settings;
 mod profiles;
 mod project_locks;
@@ -563,6 +564,7 @@ async fn run_server(
             planned,
         );
     }
+    let mut orchestration_rx = orchestration::notifications();
     let mut task_slots = 0;
     let auth_terminals: Arc<
         tokio::sync::Mutex<std::collections::HashMap<String, AuthTerminalState>>,
@@ -678,6 +680,18 @@ async fn run_server(
                 continue;
             }
 
+            _ = orchestration_rx.recv() => {
+                if let Some(store) = project_store.as_ref() {
+                    match orchestration::pump(store, &sessions).await {
+                        Ok(close) => for sid in close {
+                            dispatch::cancel_session(&sid, &mut sessions, &mut pending_host_tools, &agent_connections,
+                                project_store.as_ref(), automation_store.as_ref(), &stdout).await;
+                        },
+                        Err(e) => send_diag("warn", format!("[orchestration] delivery: {e}")),
+                    }
+                }
+                continue;
+            }
             settled = settle_rx.recv() => {
                 if let Some(settled) = settled {
                     Box::pin(dispatch::settle(
@@ -691,6 +705,7 @@ async fn run_server(
                     ))
                     .await;
                 }
+                orchestration::notify();
                 continue;
             }
 
@@ -811,6 +826,7 @@ async fn run_server(
 
             ended = turn_rx.recv() => {
                 let Some(ended) = ended else { continue };
+                orchestration::notify();
                 // A task session the daemon prompted before adopting it: held until it is.
                 let ended = if sessions.contains_key(&ended.session_id) {
                     ended

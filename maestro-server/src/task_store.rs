@@ -8,6 +8,7 @@
 //! Every function that reads and then writes runs in one transaction. The app got that atomicity
 //! from its one `Mutex<Connection>`; here the guard travels with the request instead.
 
+pub mod dependencies;
 pub mod project_import;
 pub mod requests;
 pub mod reviews;
@@ -271,6 +272,16 @@ fn mint_id(conn: &Connection, project_path: &str) -> Result<i32, String> {
 }
 
 pub fn create(conn: &mut Connection, request: &CreateTaskRequest) -> Result<Task, String> {
+    let tx = transaction(conn)?;
+    let task = create_in_transaction(&tx, request)?;
+    commit(tx)?;
+    Ok(task)
+}
+
+pub(crate) fn create_in_transaction(
+    conn: &Connection,
+    request: &CreateTaskRequest,
+) -> Result<Task, String> {
     let trimmed_title = request.title.trim();
     if trimmed_title.len() < 3 || trimmed_title.len() > 255 {
         return Err("Title must be 3-255 characters".to_string());
@@ -282,9 +293,8 @@ pub fn create(conn: &mut Connection, request: &CreateTaskRequest) -> Result<Task
         .filter(|d| !d.is_empty());
     let now = Utc::now().to_rfc3339();
 
-    let tx = transaction(conn)?;
-    let id = mint_id(&tx, &request.project_path)?;
-    tx.execute(
+    let id = mint_id(conn, &request.project_path)?;
+    conn.execute(
         "INSERT INTO tasks (project_path, id, title, description, skills, status, base_branch,
                             agent_id, priority, auto_approve, workspace_mode, workspace_worktree_id,
                             workspace_branch_mode, workspace_branch, model_override, labels,
@@ -326,9 +336,7 @@ pub fn create(conn: &mut Connection, request: &CreateTaskRequest) -> Result<Task
         ],
     )
     .map_err(|e| e.to_string())?;
-    let task = read(&tx, &request.project_path, id)?;
-    commit(tx)?;
-    Ok(task)
+    read(conn, &request.project_path, id)
 }
 
 /// Write the columns `update` names. See `TaskUpdate` for which of them leave `updated_at` alone.
@@ -607,6 +615,17 @@ pub fn queue_candidates(
             "SELECT id FROM tasks
              WHERE project_path = ?1 AND status = 'Queue' AND phase IS NULL
                AND (?2 OR execute_requested_at IS NOT NULL)
+               AND NOT EXISTS (SELECT 1 FROM feature_tasks f JOIN features feature
+                   ON feature.project_path=f.project_path AND feature.id=f.feature_id
+                   WHERE f.project_path=tasks.project_path AND f.task_id=tasks.id
+                     AND json_extract(feature.body,'$.status') != 'Running')
+               AND NOT EXISTS (SELECT 1 FROM task_relationships r
+                   JOIN tasks prerequisite ON prerequisite.project_path = r.project_path AND prerequisite.id = r.from_task_id
+                   WHERE r.project_path = tasks.project_path AND r.to_task_id = tasks.id
+                     AND r.relationship_type = 'blocks'
+                     AND (prerequisite.status != 'Done' OR prerequisite.completion IS NULL
+                       OR (EXISTS(SELECT 1 FROM feature_tasks f WHERE f.project_path=tasks.project_path AND f.task_id=tasks.id)
+                           AND (prerequisite.completion NOT IN ('Merged','MergedViaPR') OR NOT EXISTS (SELECT 1 FROM feature_integrations i WHERE i.project_path=prerequisite.project_path AND i.task_id=prerequisite.id)))))
              ORDER BY
                  execute_requested_at IS NULL ASC,
                  execute_requested_at ASC,
@@ -725,7 +744,16 @@ pub fn end_turn(
         TurnEnding::Completed { .. } | TurnEnding::ArtifactDelivered
     );
 
-    let event = if phase == Some(TaskPhase::SelfReview) && delivered {
+    let missing_plan = phase == Some(TaskPhase::Drafting)
+        && delivered
+        && request
+            .closing_message
+            .replace(crate::turn::COMPLETION_MARKER, "")
+            .trim()
+            .is_empty();
+    let event = if missing_plan {
+        TaskTransition::PhaseFailed
+    } else if phase == Some(TaskPhase::SelfReview) && delivered {
         review_verdict_event(&tx, project_path, task_id, request.review_approved)
     } else {
         match request.ending {
@@ -747,7 +775,7 @@ pub fn end_turn(
     let task = transition::apply(&tx, project_path, task_id, event, &TransitionGuard::Active)?;
     if task.is_some() {
         let phase = phase.map(text);
-        if delivered {
+        if delivered && !missing_plan {
             record_outcome(
                 &tx,
                 project_path,
@@ -764,6 +792,9 @@ pub fn end_turn(
                 &request.closing_message,
             )?;
         }
+    }
+    if let Some(task) = &task {
+        crate::orchestration::task_event(&tx, project_path, task, &request.closing_message)?;
     }
     commit(tx)?;
     Ok(task)

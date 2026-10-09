@@ -26,7 +26,7 @@ use crate::integration::keychain::KeychainStore;
 
 use super::mcp_oauth::{self, AUTHORIZATION, OAUTH_KEY};
 
-pub(crate) const KEYCHAIN_SERVICE: &str = "maestro.mcp";
+pub(crate) const KEYCHAIN_SERVICE: &str = "maestro-custom.mcp";
 const REGISTRY_URL: &str = "https://api.mcp.github.com/v0.1/servers";
 
 /// One environment variable or header. A secret's `value` is `""` when read back; sending `""`

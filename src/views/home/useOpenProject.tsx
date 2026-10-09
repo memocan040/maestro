@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import {
   useCheckIsGitRepo,
+  useConfirmCustomProject,
   useCreateProject,
   useGitInitProject,
   useRequestProjectTakeover,
@@ -65,6 +66,8 @@ export function useOpenProject(options: OpenProjectOptions = {}) {
   const { mutateAsync: gitInitProject } = useGitInitProject();
   const { mutateAsync: requestTakeover } = useRequestProjectTakeover();
 
+  const confirmCustomProject = useConfirmCustomProject();
+  const [customProject, setCustomProject] = useState<number | null>(null);
   const [opening, setOpening] = useState<number | null>(null);
   const [importing, setImporting] = useState(false);
   const [takeover, setTakeover] = useState<{ projectId: number; holder: string } | null>(null);
@@ -131,7 +134,9 @@ export function useOpenProject(options: OpenProjectOptions = {}) {
       await (options.switchTo ? options.switchTo(project, show) : show());
     } catch (error) {
       options.onAbandon?.();
-      if (isProjectLockedError(error)) {
+      if (getErrorMessage(error).includes("CUSTOM_PROJECT_CONFIRMATION:")) {
+        setCustomProject(projectId);
+      } else if (isProjectLockedError(error)) {
         setTakeover({ projectId, holder: projectLockHolder(error) });
       } else {
         reportOpenFailure(projectId, error);
@@ -199,6 +204,41 @@ export function useOpenProject(options: OpenProjectOptions = {}) {
 
   const dialogs = (
     <>
+      <AlertDialog
+        open={customProject !== null}
+        onOpenChange={(open) => !open && setCustomProject(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Use existing project data?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This folder already contains Maestro project settings or worktrees. Maestro Custom has
+              its own application database and daemon, but uses this project's .maestro folder.
+              Close any official Maestro sessions for this project before continuing. No application
+              data will be imported automatically.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={confirmCustomProject.isPending}
+              onClick={() => {
+                if (customProject === null) return;
+                const id = customProject;
+                confirmCustomProject.mutate(id, {
+                  onSuccess: () => {
+                    setCustomProject(null);
+                    void openProject(id);
+                  },
+                  onError: (e) => toast.error(e.message),
+                });
+              }}
+            >
+              Use in Maestro Custom
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <GitInitDialog
         open={gitInit !== null}
         onOpenChange={(open) => !open && setGitInit(null)}

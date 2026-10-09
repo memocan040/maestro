@@ -15,7 +15,13 @@ import { join } from "node:path";
  * itself, so pointing at src-tauri/target would fail with a bare ENOENT.
  */
 const APP_BINARY =
-  process.env.MAESTRO_E2E_BINARY ?? join(process.cwd(), "target", "release", "maestro");
+  process.env.MAESTRO_E2E_BINARY ??
+  join(
+    process.cwd(),
+    "target",
+    "release",
+    process.platform === "win32" ? "maestro.exe" : "maestro",
+  );
 
 /**
  * The app opens whatever database lives in its app-data directory. Without this the suite would

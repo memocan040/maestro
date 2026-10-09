@@ -93,15 +93,17 @@ pub fn compose(
         Some(p) if !p.is_empty() => format!("{p}\n\n---\n"),
         _ => String::new(),
     };
+    let orchestration = crate::orchestration::prompt(conn, project_path, task.id)?;
     let protocol = match role {
         AgentRole::Refiner => REFINER_PROTOCOL,
         AgentRole::Planner => PLANNER_PROTOCOL,
         AgentRole::Reviewer => REVIEWER_PROTOCOL,
         AgentRole::Coder => COMPLETION_PROTOCOL,
     };
-    blocks.push(text(format!(
-        "{role_prompt}{prompt_text}\n\n---\n{protocol}"
-    )));
+    blocks.push(text(match orchestration {
+        Some(prompt) => prompt,
+        None => format!("{role_prompt}{prompt_text}\n\n---\n{protocol}"),
+    }));
 
     let latest = |kind: &str| -> Result<Option<String>, String> {
         Ok(

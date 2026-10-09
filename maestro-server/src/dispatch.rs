@@ -114,6 +114,34 @@ pub(crate) fn runs_under_key(sessions: &SessionMap, agent_id: &str, acp_session_
     })
 }
 
+async fn retire_connection(
+    connections: &SharedAgentConnections,
+    router: &Arc<crate::sessions::SessionRouter>,
+) {
+    let retired = {
+        let mut pool = connections.lock().await;
+        let key = pool
+            .iter()
+            .find(|(_, c)| Arc::ptr_eq(&c.router, router))
+            .map(|(key, _)| key.clone());
+        key.and_then(|key| pool.remove(&key))
+    };
+    if let Some(connection) = retired {
+        let mut task = connection.shutdown();
+        if tokio::time::timeout(std::time::Duration::from_secs(5), &mut task)
+            .await
+            .is_err()
+        {
+            task.abort();
+            let _ = task.await;
+            send_diag(
+                "warn",
+                "Agent transport did not stop gracefully; process tree was terminated",
+            );
+        }
+    }
+}
+
 /// Close a session already taken out of the map: through its command loop, so the agent keeps a
 /// transcript `session/load` can replay, and by aborting it when the loop cannot take the command.
 pub(crate) async fn close_session(
@@ -123,7 +151,6 @@ pub(crate) async fn close_session(
     automation_store: Option<&crate::automation_runner::Store>,
     stdout: &crate::ClientOut,
 ) {
-    let session_agent_id = session.agent_id.clone();
     // A run's workspace is settled once its session is closed, whoever closed it. The sweep only
     // closes sessions nobody is attached to, so with a window open this is the only close there is.
     let settle = automation_store.map(|store| {
@@ -157,10 +184,7 @@ pub(crate) async fn close_session(
                     c.router.unregister(&c.acp_session_id).await;
                 }
                 if c.router.is_empty().await {
-                    agent_connections_cancel
-                        .lock()
-                        .await
-                        .remove(&session_agent_id);
+                    retire_connection(&agent_connections_cancel, &c.router).await;
                 }
             }
             // After the close has run, never alongside it: the agent holds files open under the
@@ -175,7 +199,7 @@ pub(crate) async fn close_session(
         if let Some(c) = session.cleanup {
             c.router.unregister(&c.acp_session_id).await;
             if c.router.is_empty().await {
-                agent_connections.lock().await.remove(&session_agent_id);
+                retire_connection(agent_connections, &c.router).await;
             }
         }
         if let Some(settle) = settle {
@@ -1065,6 +1089,39 @@ pub(crate) async fn dispatch_message(
             }
         }
 
+        ServerRequest::Orchestration(req) => {
+            let Some(store) = project_store.cloned() else {
+                send_or_return!(
+                    send_response(
+                        stdout,
+                        &error_response(crate::project_store::UNAVAILABLE.into())
+                    )
+                    .await
+                );
+                return true;
+            };
+            let out = Arc::clone(stdout);
+            tokio::spawn(async move {
+                let path = crate::automations::canonical_project_path(&req.project_path);
+                let response =
+                    match crate::orchestration::request(&store, &path, req.operation, None).await {
+                        Ok(value) => {
+                            crate::helpers::broadcast(
+                                &out,
+                                ServerResponse::TasksChanged(maestro_protocol::ProjectRef {
+                                    project_path: path,
+                                }),
+                            )
+                            .await;
+                            ServerResponse::OrchestrationOk(value)
+                        }
+                        Err(e) => error_response(e),
+                    };
+                if let Err(e) = send_response(&out, &response).await {
+                    crate::send_diag("warn", format!("[orchestration] reply failed: {e}"));
+                }
+            });
+        }
         ServerRequest::Cancel(req) => {
             // A window closing a task's session ends the stage it was running. Only here: a newer
             // session superseding it goes through `cancel_session` alone.

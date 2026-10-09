@@ -1,6 +1,80 @@
 use crate::command_ext::NoConsoleWindow;
 use std::path::Path;
 
+pub struct AgentChild {
+    child: tokio::process::Child,
+    #[cfg(windows)]
+    job: usize,
+}
+
+impl std::ops::Deref for AgentChild {
+    type Target = tokio::process::Child;
+    fn deref(&self) -> &Self::Target {
+        &self.child
+    }
+}
+impl std::ops::DerefMut for AgentChild {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.child
+    }
+}
+#[cfg(windows)]
+impl Drop for AgentChild {
+    fn drop(&mut self) {
+        // Closing the last job handle terminates the launcher and its descendants together.
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.job as _);
+        }
+    }
+}
+
+fn supervise(child: tokio::process::Child) -> Result<AgentChild, String> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::JobObjects::*;
+        let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if job.is_null() {
+            return Err(format!(
+                "Cannot create agent process job: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let Some(process) = child.raw_handle() else {
+            unsafe {
+                CloseHandle(job);
+            }
+            return Err("Agent process has already exited".into());
+        };
+        let configured = unsafe {
+            SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &limits as *const _ as _,
+                std::mem::size_of_val(&limits) as u32,
+            ) != 0
+                && AssignProcessToJobObject(job, process) != 0
+        };
+        if !configured {
+            let error = std::io::Error::last_os_error();
+            unsafe {
+                CloseHandle(job);
+            }
+            return Err(format!("Cannot supervise agent process tree: {error}"));
+        }
+        Ok(AgentChild {
+            child,
+            job: job as usize,
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(AgentChild { child })
+    }
+}
+
 /// Spawn an ACP agent as a child subprocess with piped stdin/stdout/stderr.
 ///
 /// `command` is the program name (e.g., "npx", "claude", "/usr/local/bin/agent-acp").
@@ -14,7 +88,7 @@ pub async fn spawn_agent_subprocess(
     args: &[String],
     cwd: &str,
     env: &std::collections::HashMap<String, String>,
-) -> Result<tokio::process::Child, String> {
+) -> Result<AgentChild, String> {
     // Reject path traversal via Component::ParentDir (T-42-01)
     // Using Path::components() avoids false positives from substring match (e.g. /my..project)
     let cwd_path = Path::new(cwd);
@@ -94,5 +168,50 @@ pub async fn spawn_agent_subprocess(
         })?;
     crate::send_diag("info", format!("[spawn] ok pid={:?}", child.id()));
 
-    Ok(child)
+    supervise(child)
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
+    #[tokio::test]
+    async fn dropping_an_agent_kills_its_launcher_descendants() {
+        use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let script = "$p=Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile -Command Start-Sleep 60' -PassThru; Write-Output $p.Id; Start-Sleep 60";
+        let mut child = spawn_agent_subprocess(
+            "powershell",
+            &["-NoProfile".into(), "-Command".into(), script.into()],
+            &dir.path().to_string_lossy(),
+            &Default::default(),
+        )
+        .await
+        .unwrap();
+        let mut reader = BufReader::new(child.stdout.take().unwrap());
+        let mut line = String::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            reader.read_line(&mut line),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let pid: u32 = line.trim().parse().unwrap();
+        let process = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+        assert!(!process.is_null());
+        drop(child);
+        let ended = unsafe { WaitForSingleObject(process, 5000) };
+        unsafe {
+            CloseHandle(process);
+        }
+        assert_eq!(
+            ended, WAIT_OBJECT_0,
+            "The launcher descendant must stop too"
+        );
+    }
 }

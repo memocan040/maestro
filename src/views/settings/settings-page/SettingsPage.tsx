@@ -1,3 +1,4 @@
+import { AgentTeamSection } from "./AgentTeamSection";
 import { useEffect, useState } from "react";
 import { useProjectSettings, useUpdateProjectSettings } from "@/services/project.service";
 import { useAgentDiscoveryQuery } from "@/services/execution.service";
@@ -235,6 +236,7 @@ function ProjectScopePane({
             agentsLoading={agentsLoading}
             connection={connection}
           />
+          <AgentTeamSection projectId={projectId} />
           <AgentProfilesSection
             projectId={projectId}
             agents={discovery?.agents ?? []}

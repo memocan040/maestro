@@ -156,7 +156,7 @@ pub fn discover_agents(registry: &AcpRegistry) -> Vec<DiscoveredAgentWithSpawn> 
 
 fn custom_agents_path() -> Result<std::path::PathBuf, String> {
     Ok(crate::tool_config::home_dir()?
-        .join(".maestro")
+        .join(".maestro-custom")
         .join("custom-agents.json"))
 }
 

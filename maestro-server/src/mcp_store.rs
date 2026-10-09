@@ -36,7 +36,7 @@ struct StoreFile {
 
 fn store_path() -> Result<PathBuf, String> {
     Ok(crate::tool_config::home_dir()?
-        .join(".maestro")
+        .join(".maestro-custom")
         .join("mcp-servers.json"))
 }
 

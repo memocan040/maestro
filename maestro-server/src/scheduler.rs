@@ -107,7 +107,10 @@ pub(crate) fn request_all() {
 /// A push about to go out: a task write or a settings change can add a candidate or a slot.
 pub(crate) fn observe(push: &ServerResponse) {
     match push {
-        ServerResponse::TasksChanged(project) => request_drain(&project.project_path),
+        ServerResponse::TasksChanged(project) => {
+            request_drain(&project.project_path);
+            crate::orchestration::notify();
+        }
         ServerResponse::PipelineSettingsChanged(changed) => match &changed.project_path {
             Some(path) => request_drain(path),
             None => request_all(),

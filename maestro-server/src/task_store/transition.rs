@@ -281,6 +281,7 @@ fn admit(
                 (
                     Some(
                         TaskPhase::PlanReview
+                            | TaskPhase::Drafting
                             | TaskPhase::SelfReview
                             | TaskPhase::Rework
                             | TaskPhase::AwaitingMerge
@@ -332,6 +333,20 @@ fn admitted(
     guard: &TransitionGuard,
 ) -> Result<Option<TaskTransition>, String> {
     let current = read_state(conn, project_path, task_id)?;
+    if matches!(guard, TransitionGuard::Claim(_))
+        || matches!(
+            event,
+            TaskTransition::ExecutionStarted | TaskTransition::SessionReady(_)
+        )
+    {
+        crate::orchestration::check_start(conn, project_path, task_id)?;
+    }
+    if (matches!(guard, TransitionGuard::Claim(_))
+        || matches!(event, TaskTransition::ExecutionStarted))
+        && !super::dependencies::blockers(conn, project_path, task_id)?.is_empty()
+    {
+        return Err("Task prerequisites have not been approved and completed".into());
+    }
     let Some(event) = admit(guard, event, current) else {
         return Ok(None);
     };
@@ -354,7 +369,7 @@ fn admitted(
 /// A missing task is an error whatever the guard.
 ///
 /// Takes a `&Connection` so a composite step can run it inside its own transaction.
-pub(super) fn apply(
+pub(crate) fn apply(
     conn: &Connection,
     project_path: &str,
     task_id: i32,
@@ -401,7 +416,17 @@ fn write(
     )
     .map_err(|e| format!("Failed to apply transition to task {task_id}: {e}"))?;
 
-    read(conn, project_path, task_id)
+    let task = read(conn, project_path, task_id)?;
+    if matches!(
+        event,
+        TaskTransition::Merged
+            | TaskTransition::PullRequestMerged
+            | TaskTransition::Stopped
+            | TaskTransition::PhaseFailed
+    ) {
+        crate::orchestration::task_event(conn, project_path, &task, "Pipeline transition")?;
+    }
+    Ok(task)
 }
 
 /// One guarded transition, the guard read in the same transaction as the write, with the update

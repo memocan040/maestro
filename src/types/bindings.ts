@@ -177,6 +177,22 @@ async createNewProject(parentDir: string, folderName: string, connectionId: numb
     else return { status: "error", error: e  as any };
 }
 },
+async orchestration(projectId: number, operation: JsonValue) : Promise<Result<OrchestrationSnapshot, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("orchestration", { projectId, operation }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async confirmCustomProject(projectId: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("confirm_custom_project", { projectId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Get list of all tasks for a project
  */
@@ -3614,6 +3630,8 @@ export type FallbackBehaviour =
  * read-only reviewer on an agent with no read-only mode is not a reviewer.
  */
 "Fail"
+export type Feature = { id: string; title: string; goal: string; acceptance: string[]; orchestrator_member: string; orchestrator_task: number; allowed_members: string[]; max_parallel: number; base_branch: string; integration_branch: string; status: string; plan: PlannedTask[]; task_ids: number[]; created_at: string }
+export type FeatureMessage = { id: string; feature_id: string; sender_task: number | null; recipient_task: number; kind: string; body: string; state: string; created_at: string }
 export type FileEntry = { name: string; is_dir: boolean }
 export type FileTransferResult = { transfer_id: string; bytes_transferred: number }
 /**
@@ -3820,6 +3838,7 @@ export type OpenedPullRequest = { number: number; url: string;
  * [`CreatedPullRequest::head_sha`].
  */
 head_sha: string | null }
+export type OrchestrationSnapshot = { members: TeamMember[]; features: Feature[]; messages: FeatureMessage[] }
 /**
  * How the current phase is going.
  * 
@@ -3829,6 +3848,7 @@ head_sha: string | null }
  * would make every waiting card pulse and turn the animation into wallpaper.
  */
 export type PhaseStatus = "Running" | "Blocked" | "Waiting" | "Failed"
+export type PlannedTask = { key: string; title: string; instructions: string; acceptance: string[]; member_id: string; depends_on?: string[] }
 /**
  * Only produced once the server is up: every way of failing to reach it returns `Err` instead,
  * so there is no "server is broken" variant to report here.
@@ -4279,6 +4299,7 @@ export type TaskPhase = "Spawning" | "Refining" | "Drafting" | "PlanReview" | "I
 export type TaskPriority = "Urgent" | "High" | "Medium" | "Low" | "None"
 export type TaskRelationship = { id: number; from_task_id: number; to_task_id: number; relationship_type: string; created_at: string }
 export type TaskStatus = "Planning" | "Queue" | "InProgress" | "Review" | "Done" | "Cancelled"
+export type TeamMember = { id: string; profile_id: string; name: string; strengths: string; enabled: boolean; orchestrator: boolean; worker: boolean; reviewer: boolean; max_sessions: number; priority: number }
 export type Template = { id: number; name: string; 
 /**
  * A topic the user files it under, shown on its card and searched.

@@ -242,6 +242,25 @@ pub async fn open_project(
     project_id: i32,
 ) -> Result<Project, String> {
     let project = crate::project::lock::load_project(&app_state, project_id)?;
+    let connection = crate::core::get_git_connection(&project, &app_state)
+        .await
+        .map_err(|e| e.to_string())?;
+    let directory = format!("{}/.maestro", connection.path());
+    let owner: serde_json::Value =
+        project_storage::read_maestro_json(&connection, "custom-owner.json").await;
+    if crate::connectivity::files::exists(&connection, &directory).await
+        && owner["identifier"] != "com.memocan040.maestro.custom"
+    {
+        return Err("CUSTOM_PROJECT_CONFIRMATION: This project already has Maestro data. Confirm before Maestro Custom uses its project settings and worktrees.".into());
+    }
+    if owner["identifier"] != "com.memocan040.maestro.custom" {
+        project_storage::write_maestro_json(
+            &connection,
+            "custom-owner.json",
+            &serde_json::json!({"identifier":"com.memocan040.maestro.custom"}),
+        )
+        .await?;
+    }
 
     // Errors if another window holds it, or if its server cannot be reached to ask.
     crate::project::lock::acquire(&app_state, &project).await?;

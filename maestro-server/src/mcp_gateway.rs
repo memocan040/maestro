@@ -176,6 +176,97 @@ pub(crate) async fn handle_host_tool_call(
         return;
     };
 
+    if [
+        "get_feature_context",
+        "submit_feature_plan",
+        "send_feature_message",
+        "acknowledge_feature_message",
+    ]
+    .contains(&call.name.as_str())
+    {
+        let binding = session
+            .project
+            .as_ref()
+            .and_then(|p| p.meta.task_id.map(|task| (p.project_path.clone(), task)));
+        let store = project_store.cloned();
+        let out = Arc::clone(stdout);
+        tokio::spawn(async move {
+            let result = async {
+                let (path, task) = binding.ok_or("This tool requires a project task session")?;
+                let store = store.ok_or("Project store is unavailable")?;
+                let mut args = if call.arguments.is_null() {
+                    json!({})
+                } else {
+                    call.arguments.clone()
+                };
+                if !args.is_object() {
+                    return Err("Tool arguments must be an object".into());
+                }
+                args["action"] = json!(match call.name.as_str() {
+                    "get_feature_context" => "snapshot",
+                    "submit_feature_plan" => "submit_plan",
+                    "send_feature_message" => "message",
+                    _ => "acknowledge",
+                });
+                let value = crate::orchestration::request(&store, &path, args, Some(task)).await?;
+                crate::helpers::broadcast(
+                    &out,
+                    ServerResponse::TasksChanged(ProjectRef { project_path: path }),
+                )
+                .await;
+                Ok::<_, String>(value)
+            }
+            .await;
+            let response = match result {
+                Ok(result) => HostToolResult {
+                    session_id: call.session_id.clone(),
+                    request_id: call.request_id.clone(),
+                    result,
+                    error: None,
+                },
+                Err(e) => fail(&call, &e),
+            };
+            if reply_tx.send(response).is_err() {
+                send_diag("warn", "Orchestration MCP caller disconnected");
+            }
+        });
+        return;
+    }
+    let restricted = if let (Some(store), Some(binding)) = (project_store, session.project.as_ref())
+    {
+        if let Some(task) = binding.meta.task_id {
+            let db = store.lock().await;
+            match crate::orchestration::feature_for_task(&db, &binding.project_path, task) {
+                Ok(Some(_)) => true,
+                Ok(None) => db.query_row("SELECT EXISTS(SELECT 1 FROM features WHERE project_path=?1 AND json_extract(body,'$.orchestrator_task')=?2)", rusqlite::params![binding.project_path,task], |r| r.get::<_,bool>(0)).unwrap_or(true),
+                Err(_) => true,
+            }
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+    if restricted
+        && matches!(
+            call.name.as_str(),
+            "create_task"
+                | "update_task"
+                | "create_automation"
+                | "update_automation"
+                | "delete_automation"
+                | "run_automation"
+                | "update_template"
+                | "save_as_template"
+                | "delete_template"
+                | "create_prompt"
+                | "update_prompt"
+                | "delete_prompt"
+        )
+    {
+        let _ = reply_tx.send(fail(&call, "Feature agents use approved feature plans and messages; shared configuration and delegation require the user"));
+        return;
+    }
     if PROMPT_TOOLS.contains(&call.name.as_str()) {
         let project_path = session
             .project
@@ -1135,6 +1226,60 @@ mod tests {
     fn ok(result: HostToolResult) -> Value {
         assert_eq!(result.error, None);
         result.result
+    }
+
+    #[tokio::test]
+    async fn feature_workers_cannot_delegate_or_read_other_feature_messages() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir(project.path().join(".maestro")).unwrap();
+        std::fs::write(project.path().join(".maestro/profiles.json"), json!({"profiles":[{"id":"lead","name":"Lead","role":"Planner","agent_id":"fake"},{"id":"worker","name":"Worker","role":"Coder","agent_id":"fake"}]}).to_string()).unwrap();
+        let path = project.path().to_string_lossy().replace('\\', "/");
+        let mut conn = crate::project_store::open_in_memory();
+        let mut request = |v: Value| {
+            crate::orchestration::answer(&mut conn, &path, serde_json::from_value(v).unwrap(), None)
+                .unwrap()
+        };
+        for (id, lead) in [("lead", true), ("worker", false)] {
+            request(
+                json!({"action":"save_member","member":{"id":id,"profile_id":id,"name":id,"strengths":"","enabled":true,"orchestrator":lead,"worker":!lead,"reviewer":false,"max_sessions":2,"priority":0}}),
+            );
+        }
+        let created = request(
+            json!({"action":"create_feature","title":"Own feature","goal":"Work","acceptance":["Pass"],"orchestrator_member":"lead","allowed_members":["worker"],"max_parallel":2,"base_branch":"main"}),
+        );
+        let id = created["features"][0]["id"].as_str().unwrap();
+        request(
+            json!({"action":"submit_plan","feature_id":id,"tasks":[{"key":"a","title":"Worker task","instructions":"Test","acceptance":["Pass"],"member_id":"worker","depends_on":[]}]}),
+        );
+        let approved = request(json!({"action":"approve_plan","feature_id":id}));
+        let task = approved["features"][0]["task_ids"][0].as_i64().unwrap() as i32;
+        request(
+            json!({"action":"create_feature","title":"Other feature","goal":"Private conversation","acceptance":["Pass"],"orchestrator_member":"lead","allowed_members":["worker"],"max_parallel":2,"base_branch":"main"}),
+        );
+        let store: Store = Arc::new(tokio::sync::Mutex::new(conn));
+        let mut sessions = SessionMap::new();
+        sessions.insert("session".into(), session_in(&path, Some(task)));
+        for name in [
+            "create_task",
+            "update_task",
+            "create_automation",
+            "run_automation",
+        ] {
+            let denied = call(&sessions, Some(&store), name, json!({})).await;
+            assert!(
+                denied.error.is_some_and(|e| e.contains("require the user")),
+                "{name} bypassed the approval gate"
+            );
+        }
+        let context = ok(call(&sessions, Some(&store), "get_feature_context", json!({})).await);
+        assert_eq!(context["features"].as_array().unwrap().len(), 1);
+        assert_eq!(context["features"][0]["id"], id);
+        assert!(
+            call(&sessions, Some(&store), "send_feature_message", json!([]))
+                .await
+                .error
+                .is_some()
+        );
     }
 
     #[tokio::test]

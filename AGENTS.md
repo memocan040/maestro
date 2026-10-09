@@ -157,7 +157,7 @@ Claude Code (v2.1.277+) reads `AGENTS.md` itself, and only while no `CLAUDE.md` 
 | File                       | Covers                                                                                                                                                                                                            |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `src/AGENTS.md`            | View rendering, stores, contexts, the base-ui pitfall, reading cron expressions, canvas surfaces                                                                                                                  |
-| `src-tauri/AGENTS.md`      | Database schema and migrations, `MAESTRO_DATA_DIR`, Rust logging, the `wdio` feature, `.maestro/` project storage                                                                                                 |
+| `src-tauri/AGENTS.md`      | Database schema and migrations, `MAESTRO_CUSTOM_DATA_DIR`, Rust logging, the `wdio` feature, `.maestro/` project storage                                                                                          |
 | `maestro-server/AGENTS.md` | The resident daemon, project locks, tasks and the task pipeline, automations and their worktrees, webhooks, the Maestro MCP server, Collections (skills and MCP servers), the bundled and custom agent registries |
 | `website/AGENTS.md`        | The home page video                                                                                                                                                                                               |
 
@@ -243,7 +243,7 @@ genuinely changed — a diff there means a model changed and should be committed
 
 ## Important Notes
 
-- SQLite DB location managed by Tauri app data directory, overridable with `MAESTRO_DATA_DIR` (see `src-tauri/AGENTS.md`)
+- SQLite DB location managed by Tauri app data directory, overridable with `MAESTRO_CUSTOM_DATA_DIR` (see `src-tauri/AGENTS.md`)
 - Schema version: 32 (`SCHEMA_VERSION` in `core/schema.rs`). Databases at v22 or later migrate in place and keep their data; only pre-v22 databases are dropped and recreated
 - `maestro-protocol` crate shared between maestro and maestro-server; `PROTOCOL_VERSION` is 13.
   Bumping it redeploys `maestro-server` on every connection at first use, because `deploy.rs`

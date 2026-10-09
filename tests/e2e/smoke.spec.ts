@@ -33,8 +33,8 @@ type TauriGlobal = {
 };
 
 describe("app launch", () => {
-  it("opens a window titled Maestro", async () => {
-    await expect(browser).toHaveTitle("Maestro");
+  it("opens a window titled Maestro Custom", async () => {
+    await expect(browser).toHaveTitle("Maestro Custom");
   });
 
   it("renders Home rather than an error boundary", async () => {

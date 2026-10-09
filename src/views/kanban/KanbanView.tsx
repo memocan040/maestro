@@ -1,3 +1,4 @@
+import { FeaturePanel } from "@/views/kanban/FeaturePanel";
 import { useState, useMemo, useRef } from "react";
 import { useShortcuts } from "@/hooks/useShortcuts";
 import { Plus, Archive, Search, BellDot } from "lucide-react";
@@ -125,6 +126,7 @@ export const KanbanView: React.FC = () => {
       </Dialog>
 
       <div className="h-12 bg-card flex items-center px-4 gap-2 shrink-0">
+        {projectId !== null && <FeaturePanel projectId={projectId} />}
         {/* Search */}
         <ShortcutHint shortcutId="focus-search">
           <InputGroup className="w-48 bg-muted!">

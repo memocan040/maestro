@@ -385,14 +385,14 @@ fn test_list_agents_returns_ok_response() {
     let _ = child.wait();
 }
 
-/// An agent the user declared in `~/.maestro/custom-agents.json` must reach the picker, and it is
+/// An agent the user declared in `~/.maestro-custom/custom-agents.json` must reach the picker, and it is
 /// only worth asserting against the real binary: the file is read from the home directory of
 /// whichever machine the server runs on, which is the part a unit test cannot stand in for.
 #[test]
 fn test_list_agents_includes_user_defined_custom_agents() {
     let home = tempfile::tempdir().expect("temp home");
-    let config_dir = home.path().join(".maestro");
-    std::fs::create_dir_all(&config_dir).expect("create .maestro");
+    let config_dir = home.path().join(".maestro-custom");
+    std::fs::create_dir_all(&config_dir).expect("create .maestro-custom");
     std::fs::write(
         config_dir.join("custom-agents.json"),
         r#"{
@@ -681,8 +681,8 @@ fn test_fast_request_is_answered_while_a_slow_one_is_outstanding() {
     .join(", ");
 
     let home = tempfile::tempdir().expect("temp home");
-    let config_dir = home.path().join(".maestro");
-    std::fs::create_dir_all(&config_dir).expect("create .maestro");
+    let config_dir = home.path().join(".maestro-custom");
+    std::fs::create_dir_all(&config_dir).expect("create .maestro-custom");
     std::fs::write(
         config_dir.join("custom-agents.json"),
         format!(
@@ -1072,4 +1072,137 @@ fn test_import_project_over_the_wire() {
 
     let _ = a.kill();
     let _ = a.wait();
+}
+
+/// Uses the resident daemon and real git; no provider calls or fake completion flags.
+#[test]
+fn test_feature_plan_over_the_wire_is_idempotent_and_isolates_git() {
+    use serde_json::{json, Value};
+    fn rpc(
+        child: &mut std::process::Child,
+        path: &str,
+        id: u64,
+        operation: Value,
+    ) -> ServerResponse {
+        write_msg_with_id(
+            child.stdin.as_mut().unwrap(),
+            Some(id),
+            ServerRequest::Orchestration(maestro_protocol::OrchestrationRequest {
+                project_path: path.into(),
+                operation,
+            }),
+        );
+        loop {
+            let (reply_id, response) = read_msg_with_id(child.stdout.as_mut().unwrap());
+            if reply_id == Some(id) {
+                return response;
+            }
+        }
+    }
+    fn value(reply: ServerResponse) -> Value {
+        match reply {
+            ServerResponse::OrchestrationOk(value) => value,
+            other => panic!("expected orchestration reply, got {other:?}"),
+        }
+    }
+    let daemon = Daemon::new();
+    let project = tempfile::tempdir().unwrap();
+    let path = project.path().to_string_lossy().replace('\\', "/");
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(project.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    };
+    git(&["init", "-b", "main"]);
+    git(&[
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.test",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "Initial",
+    ]);
+    let original_main = git(&["rev-parse", "main"]);
+    std::fs::create_dir(project.path().join(".maestro")).unwrap();
+    std::fs::write(project.path().join(".maestro/profiles.json"), json!({"profiles":[{"id":"lead","name":"Lead","role":"Planner","agent_id":"uninstalled-fixture"},{"id":"worker","name":"Worker","role":"Coder","agent_id":"uninstalled-fixture"}]}).to_string()).unwrap();
+    let mut child = daemon.attach();
+    for (n, id, lead) in [(1, "lead", true), (2, "worker", false)] {
+        value(rpc(
+            &mut child,
+            &path,
+            n,
+            json!({"action":"save_member","member":{"id":id,"profile_id":id,"name":id,"strengths":"","enabled":true,"orchestrator":lead,"worker":!lead,"reviewer":false,"max_sessions":2,"priority":0}}),
+        ));
+    }
+    let created = value(rpc(
+        &mut child,
+        &path,
+        3,
+        json!({"action":"create_feature","title":"Wire feature","goal":"Verify integration","acceptance":["Passed"],"orchestrator_member":"lead","allowed_members":["worker"],"max_parallel":2,"base_branch":"main"}),
+    ));
+    let feature_id = created["features"][0]["id"].as_str().unwrap();
+    let plan=(0..3).map(|i| json!({"key":format!("t{i}"),"title":format!("Task {i}"),"instructions":"Test","acceptance":["Pass"],"member_id":"worker","depends_on":if i==2 {vec!["t0"]} else {vec![]}})).collect::<Vec<_>>();
+    value(rpc(
+        &mut child,
+        &path,
+        4,
+        json!({"action":"submit_plan","feature_id":feature_id,"tasks":plan}),
+    ));
+    let approved = value(rpc(
+        &mut child,
+        &path,
+        5,
+        json!({"action":"approve_plan","feature_id":feature_id}),
+    ));
+    let repeated = value(rpc(
+        &mut child,
+        &path,
+        6,
+        json!({"action":"approve_plan","feature_id":feature_id}),
+    ));
+    assert_eq!(
+        approved["features"][0]["task_ids"],
+        repeated["features"][0]["task_ids"]
+    );
+    assert_eq!(
+        approved["features"][0]["task_ids"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    let branch = approved["features"][0]["integration_branch"]
+        .as_str()
+        .unwrap();
+    assert_eq!(git(&["rev-parse", branch]), original_main);
+    assert_eq!(git(&["rev-parse", "main"]), original_main);
+    let task = approved["features"][0]["task_ids"][0].as_i64().unwrap();
+    assert!(matches!(
+        rpc(
+            &mut child,
+            &path,
+            7,
+            json!({"action":"record_integration","task_id":task,"commit_sha":"0".repeat(40)})
+        ),
+        ServerResponse::Error(_)
+    ));
+    value(rpc(
+        &mut child,
+        &path,
+        8,
+        json!({"action":"control","feature_id":feature_id,"command":"cancel"}),
+    ));
+    let _ = child.kill();
+    let _ = child.wait();
 }

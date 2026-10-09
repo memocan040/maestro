@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useOpenProject } from "./useOpenProject";
 import type { OpenProjectOptions } from "./useOpenProject";
 
+const confirmCustom = vi.hoisted(() => vi.fn());
 const requestTakeover = vi.hoisted(() => vi.fn());
 const openProject = vi.hoisted(() => vi.fn());
 const setSelectedProject = vi.hoisted(() => vi.fn());
@@ -29,6 +30,7 @@ vi.mock("@/services/project.service", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/services/project.service")>();
   return {
     ...actual,
+    useConfirmCustomProject: () => ({ mutate: confirmCustom }),
     useGitInitProject: () => ({ mutateAsync: vi.fn() }),
     useCreateProject: () => ({ mutateAsync: vi.fn() }),
     useCheckIsGitRepo: () => ({ mutateAsync: () => Promise.resolve(true) }),
@@ -66,6 +68,20 @@ describe("useOpenProject", () => {
     vi.clearAllMocks();
     primeProjectServer.mockResolvedValue(undefined);
     releaseActiveProjectLock.mockResolvedValue(undefined);
+  });
+
+  it("requires visible confirmation before using existing Maestro project data", async () => {
+    openProject.mockRejectedValueOnce("CUSTOM_PROJECT_CONFIRMATION: existing project");
+    renderHarness();
+    fireEvent.click(screen.getByText("Open maestro"));
+    await screen.findByText("Use in Maestro Custom");
+    expect(confirmCustom).not.toHaveBeenCalled();
+    expect(setSelectedProject).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("Use in Maestro Custom"));
+    expect(confirmCustom).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
   });
 
   describe("a project whose board could not be moved to its server", () => {

@@ -498,10 +498,29 @@ async fn run(
     } = claimed;
 
     let workspace = crate::worktree::prepare_task_workspace(&launcher.store, &task, role).await?;
+    crate::orchestration::verify_workspace_basis(
+        &launcher.store,
+        &project_path,
+        task.id,
+        &workspace.cwd,
+    )
+    .await?;
 
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let isolated = {
+        let conn = launcher.store.lock().await;
+        crate::orchestration::feature_for_task(&conn, &project_path, task.id)?.is_some()
+            || crate::orchestration::orchestrator_for(&conn, &project_path, task.id)?.is_some()
+    };
+    // Feature turns get a dedicated process: a stuck provider can be stopped without killing another feature.
+    let connection_key = if isolated {
+        format!("feature-session:{session_id}")
+    } else {
+        agent_id.clone()
+    };
     // The agent process runs in the project, never in the worktree: see `automation_runner`.
     let connection = crate::helpers::ensure_and_get_connection(
-        &agent_id,
+        &connection_key,
         &launcher.agent_connections,
         &command,
         &args,
@@ -512,7 +531,6 @@ async fn run(
     .await
     .ok_or_else(|| format!("The agent {agent_id} could not be started"))?;
 
-    let session_id = uuid::Uuid::new_v4().to_string();
     let requested_at = chrono::Utc::now();
     let mut result = match crate::session::connection::create_session_on_connection(
         &connection,
@@ -525,11 +543,21 @@ async fn run(
     .await
     {
         Ok(result) => result,
-        Err(message) if message == AUTH_REQUIRED_ERROR => return Err(Failure::AuthRequired),
+        Err(message) if message == AUTH_REQUIRED_ERROR => {
+            if isolated {
+                crate::helpers::evict_if_same_connection(
+                    &launcher.agent_connections,
+                    &connection_key,
+                    &connection.router,
+                )
+                .await;
+            }
+            return Err(Failure::AuthRequired);
+        }
         Err(message) => {
             crate::helpers::evict_if_same_connection(
                 &launcher.agent_connections,
-                &agent_id,
+                &connection_key,
                 &connection.router,
             )
             .await;
@@ -721,6 +749,14 @@ async fn prepare(
         );
     }
 
+    {
+        let conn = launcher.store.lock().await;
+        let current = crate::task_store::get(&conn, project_path, task.id)?;
+        if current.is_none_or(|t| t.phase != Some(TaskPhase::Spawning)) {
+            return Err(Failure::Moved);
+        }
+        crate::orchestration::check_start(&conn, project_path, task.id)?;
+    }
     let mut commands = settings_commands(&settings, config_options);
     commands.push(SessionCommand::PromptStructured(composed.blocks));
     for command in commands {

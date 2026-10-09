@@ -10,7 +10,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:dev": "MAESTRO_DATA_DIR=$PWD/.maestro/dev-data tauri dev",
+    "tauri:dev": "MAESTRO_CUSTOM_DATA_DIR=$PWD/.maestro/custom-dev-data tauri dev",
     "tauri:gen": "cd src-tauri && MAESTRO_TEST_MANIFEST=1 cargo test --lib generate_typescript_bindings",
     "test": "vitest",
     "test:e2e": "bun run test:e2e:build && bun run test:e2e:run",
@@ -21,7 +21,8 @@
     "format": "oxfmt --check",
     "format:fix": "oxfmt .",
     "format:rust": "cargo fmt --all -- --check",
-    "format:rust:fix": "cargo fmt --all"
+    "format:rust:fix": "cargo fmt --all",
+    "server:bundle": "node scripts/bundle-custom-server.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

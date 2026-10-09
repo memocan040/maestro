@@ -70,9 +70,9 @@ holding what earlier builds wrote, until phase 4 of `docs/daemon-store-plan.md` 
 into the daemon and drops them. Outside `core/schema.rs` no app code touches them, and nothing new
 should.
 
-## The dev data directory (`MAESTRO_DATA_DIR`)
+## The dev data directory (`MAESTRO_CUSTOM_DATA_DIR`)
 
-`bun run tauri:dev` sets `MAESTRO_DATA_DIR=$PWD/.maestro/dev-data`, so a development build keeps
+`bun run tauri:dev` sets `MAESTRO_CUSTOM_DATA_DIR=$PWD/.maestro/custom-dev-data`, so a development build keeps
 its `maestro.db` and its `locks/` inside the checkout instead of the OS app-data directory.
 
 This is not a convenience. A database is only readable by the build that wrote it or a newer one —

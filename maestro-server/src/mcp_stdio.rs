@@ -409,7 +409,11 @@ mod tests {
                 "get_prompt",
                 "create_prompt",
                 "update_prompt",
-                "delete_prompt"
+                "delete_prompt",
+                "get_feature_context",
+                "submit_feature_plan",
+                "send_feature_message",
+                "acknowledge_feature_message"
             ]
         );
         for tool in tools {
