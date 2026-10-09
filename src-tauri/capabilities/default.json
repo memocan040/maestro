@@ -19,7 +19,6 @@
     "core:window:allow-is-maximized",
     "core:window:allow-close",
     "notification:default",
-    "updater:default",
     "process:default",
     "core:webview:allow-set-webview-zoom"
   ]

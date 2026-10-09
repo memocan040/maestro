@@ -28,8 +28,8 @@ Tatsächlich bestanden:
 
 - Frontend-Build nach Einführung der gemeinsamen generierten Typen.
 - Vollständiger Vitest-Lauf: **1.573 Tests in 157 Dateien**.
-- Tauri-Lib-Tests unter Windows: **364 bestanden, 2 ignoriert**, einschließlich Bindings-Generator und Schutz ungesicherter Git-Änderungen.
-- Daemon-/Protokoll-Gesamtlauf: **385 Daemon-Unit-Tests, 62 Protokolltests, 16 Daemon-Integrationstests**. Danach zusätzlich einzeln bestanden: MCP-Freigabe-/Kontextgrenzen und veraltete Worktree-Basis. Gesamtstand enthält deshalb 387 Daemon-Unit-Tests; abschließenden Gesamtlauf nach diesen Ergänzungen noch bestätigen.
+- Tauri-Lib-Tests unter Windows: **366 bestanden, 2 ignoriert**, einschließlich Bindings-Generator, Schutz ungesicherter Git-Änderungen und unveränderter offizieller Projektdateien vor Übernahme.
+- Daemon-/Protokoll-Gesamtlauf: **387 Daemon-Unit-Tests, 62 Protokolltests, 16 Daemon-Integrationstests**, einschließlich MCP-Freigabe-/Kontextgrenzen und veralteter Worktree-Basis.
 - Echter Daemon/Git-Test: drei Child-Tasks, idempotente Planfreigabe, isolierter Feature-Branch, unverändertes Main, ungültiger Commit abgewiesen.
 - Regressionen: leerer Planner-Abschluss, Cancel während Spawn, konkurrierende SQLite-Claims, persistente/deduplizierte Nachrichten, DAG und Freigabe-/Integrationssperren, Windows-Kindprozessbeendigung.
 - `cargo check --workspace --locked -j 4` mit explizitem RC-Pfad bestanden.
@@ -39,13 +39,13 @@ Happy-DOM protokolliert weiterhin die bekannten Canvas-/Google-Fonts-Fetch-Abbr�
 
 Reale CLIs liefern Versionen: Claude Code 2.1.293, Codex CLI 0.161.0, Cursor Agent 2026.10.01-e373342. **Keine drei authentifizierten ACP-Harnesses verifiziert; Test A bleibt offen.** Keine Provider-Aufträge mit zusätzlichem Modellverbrauch ausgeführt.
 
-Windows-Release-/GUI-Builds laufen bzw. deren Ergebnis ist unten nachzutragen. Ein laufender Build zählt nicht als bestanden. Die GUI-E2E-Prüfung, Installation und Parallelbetrieb mit offiziellem Maestro sind noch nicht nachgewiesen.
+Windows-GUI-Smoke gegen die echte Debug-App ohne `wdio`: **5 bestanden** (Fenstertitel, Home, lokaler Rechner, IPC/DB, Version). Das erste Release startete wegen einer verbliebenen nativen Updater-Registrierung nicht; Registrierung und Permission sind korrigiert und der GUI-Lauf danach bestand. Der eingebettete Windows-WebDriver scheitert schon beim Kompilieren an inkompatiblen Windows/WebView2-Typen; Windows verwendet deshalb den erfolgreich geprüften externen Tauri-/Edge-Treiber. Der korrigierte Release-Installer wird noch geprüft; laufende Builds zählen nicht als bestanden. Eine offizielle Maestro-Installation ist auf diesem Rechner nicht vorhanden; tatsächlicher Parallelbetrieb bleibt offen.
 
 ## Nächste Schritte in Reihenfolge
 
 1. Laufende Builds/Logs auswerten. Den letzten Quellstand erneut als Release ohne `wdio` bauen, weil während des ersten Cold-Builds weitere Schutzprüfungen entstanden sind. Daemon-Asset muss zum letzten Stand passen. Installer erst nach erfolgreichem Build als Ergebnis nennen.
 2. Gesamtläufe für Rust, Frontend, Lint und beide Formatprüfungen bestätigen. Neue Probleme beheben; alte Warnungen getrennt halten.
-3. Echte Windows-GUI-Smoke-Tests gegen die mit `wdio` gebaute **Debug**-Binary ausführen. `MAESTRO_E2E_BINARY` explizit auf `target/debug/maestro.exe` setzen. Release-Binary niemals mit `wdio` ausliefern. Die E2E-Konfiguration erstellt temporäre App-Daten.
+3. Windows-GUI-Smoke bei Änderungen wiederholen. `bun run test:e2e` baut unter Windows ohne `wdio` und verwendet den externen Treiber. `MAESTRO_E2E_BINARY` kann eine installierte oder Debug-Binary auswählen. `MAESTRO_E2E_SCREENSHOT` speichert einen Screenshot. Die E2E-Konfiguration isoliert Custom-App und Daemon über `MAESTRO_CUSTOM_DATA_DIR`.
 4. Einen deterministischen Fake-ACP-Agenten als Test-Fixture bauen und B/C/D vollständig über echte ACP-Sessions prüfen: strukturierte Planübergabe, parallele Starts, menschliche Merge-Gates, integrierte Basis, Rückfrage an denselben Worker, Reviewer-/Rework-Schleife. Vorhandener Wire-Test bildet nur einen Teil von B ab und ersetzt diese Tests nicht.
 5. Pause/Resume/Cancel vollständig schließen: Pausierte nicht kooperierende Provider zeitlich begrenzt stoppen; beim Resume neue offene Arbeit und verlorene/fehlgeschlagene Turns gezielt fortsetzen. Derzeit öffnet Resume die Startsperre, benötigt aber teilweise manuelles Task-Retry. Terminalprozesse, die der Host für ACP erzeugt, gesondert in die Prozessabnahme aufnehmen.
 6. Recovery E: App schließen/öffnen und Daemon töten/neustarten, offene Entscheidungen/Session-Schlüssel/Claims/Integrationen rekonstruieren, kein erneuter Abschluss. Zustellung an inaktive/dormante Sessions muss die vorhandene unterstützte Reload-Strecke nutzen bzw. eine sichtbare Ersatzsession mit Übergabe erstellen. `Submitted` nicht blind wiederholen.

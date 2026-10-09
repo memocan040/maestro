@@ -766,7 +766,7 @@ pub async fn pump(
                 if task != f.orchestrator_task && !f.task_ids.contains(&task) {
                     continue;
                 }
-                if f.status == "Cancelled" {
+                if matches!(f.status.as_str(), "Cancelled" | "Completed") {
                     close.push(sid.clone());
                     continue;
                 }
