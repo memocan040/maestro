@@ -10,7 +10,7 @@ function frame(response) {
   return Buffer.concat([header, body]);
 }
 
-async function fixture(t, answer) {
+async function fixture(t, answer, expectedRequest = { home_summary: { project_paths: [] } }) {
   const server = createServer((socket) => {
     let buffer = Buffer.alloc(0);
     let attached = false;
@@ -33,7 +33,7 @@ async function fixture(t, answer) {
           socket.write(response.subarray(0, 2));
           setTimeout(() => socket.write(response.subarray(2)), 5);
         } else {
-          assert.deepEqual(request, { home_summary: { project_paths: [] } });
+          assert.deepEqual(request, expectedRequest);
           answer(socket);
         }
       }
@@ -75,4 +75,30 @@ test("oversized replies are rejected before buffering their bodies", async (t) =
     socket.end(header);
   });
   await assert.rejects(daemonRequest(runtime, { home_summary: { project_paths: [] } }), /Frame/);
+});
+
+test("continuous pushes cannot extend the absolute request deadline", async (t) => {
+  const runtime = await fixture(t, (socket) => {
+    const timer = setInterval(() => socket.write(frame({ orchestration_changed: {} })), 10);
+    socket.once("close", () => clearInterval(timer));
+  });
+  await assert.rejects(
+    daemonRequest(runtime, { home_summary: { project_paths: [] } }, "home_summary_ok", 150),
+    /antwortet nicht/,
+  );
+});
+
+test("orchestration replies retain the snapshot payload", async (t) => {
+  const request = { orchestration: { project_path: "fixture", operation: { action: "snapshot" } } };
+  const snapshot = {
+    members: [],
+    features: [{ id: "f1", status: "AwaitingApproval" }],
+    messages: [],
+  };
+  const runtime = await fixture(
+    t,
+    (socket) => socket.end(frame({ orchestration_ok: snapshot })),
+    request,
+  );
+  assert.deepEqual(await daemonRequest(runtime, request, "orchestration_ok"), snapshot);
 });

@@ -60,7 +60,8 @@ $env:MAESTRO_TEST_MANIFEST = '1'
 cargo test -p maestro --lib -j 4
 ```
 
-Für einen App-Build diese Variable entfernen. Development verwendet denselben Asset-Staging-Pfad: zuerst `bun run server:bundle`, dann `bun run tauri:dev` (dessen Unix-Shell-Skript unter PowerShell gegebenenfalls durch `bun run tauri dev` ersetzen).
+Für einen App-Build diese Variable entfernen. Unter Windows baut `bun run custom:dev`
+den Debug-Daemon selbst und verwendet einen getrennten Dev-Asset-Pfad, wie unten beschrieben.
 
 Ein Windows-NSIS-Release ohne `wdio` wurde am 2026-10-09 gebaut und unter
 `C:\Users\mehme\AppData\Local\MaestroCustomVerification` installiert. Der Installer liegt in
@@ -132,3 +133,18 @@ Ein echter Windows-GUI-Test in `tests/e2e/orchestration.spec.ts` hat Team-Zuordn
 Feature-Erstellung, erhaltenen Zustand nach App-Neustart und Abbruch gegen die
 installierte Anwendung geprüft. Dieser Test startet keine bezahlten Agent-Turns und
 ist kein Nachweis des vollständigen Orchestrator-/Worker-/Review-Ablaufs.
+
+## Echte ACP-Nachweise dieser Fortsetzung
+
+Codex, Claude Code und Cursor wurden mit den vorhandenen Anmeldungen über die tatsächliche
+Daemon-/ACP-Strecke initialisiert und beantworteten jeweils einen begrenzten Prompt mit
+`end_turn`. Der opt-in Aufruf ist `node scripts/verify-real-harnesses.mjs codex-acp claude-acp cursor`.
+Er verwendet eine temporäre Binary-Kopie und einen eigenen Daemon-Store pro Harness.
+Die Ausgabe bestätigt nur Agent-Text, keine wiederholte Benutzeranweisung. Das sind echte
+Provider-Aufrufe; sie ersetzen noch keine vollständige Multi-Agent-Feature-Abnahme.
+
+Der reale Codex-Orchestrator hat außerdem einen validierten Drei-Task-Plan für das isolierte
+Abnahmeprojekt erzeugt. Der Plan wartet auf menschliche Freigabe. Projektpfad, Feature-ID,
+Fortsetzungsbefehle und offene Nachweise stehen in `custom-orchestration-progress.md`.
+Worker dürfen erst nach dieser Freigabe starten; jede spätere Integration benötigt eine
+weitere menschliche Freigabe des konkreten Ergebnisses.

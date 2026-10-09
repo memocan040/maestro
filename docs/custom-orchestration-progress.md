@@ -43,17 +43,17 @@ Windows-GUI-Smoke gegen die echte Debug-App ohne `wdio`: **5 bestanden** (Fenste
 
 ## Nächste Schritte in Reihenfolge
 
-1. Für die nächste Implementierung den aktuellen Stand `025f7581` verwenden. Release, Installation und GUI-Smoke sind für diesen Code geprüft. Nach Codeänderungen passende App und Daemon neu bauen; gleichbleibende Versionen allein beweisen keinen identischen Quellstand.
+1. Aktuelle Fortsetzung: Desktop-/Update-Strecke in `7698e48e`, ACP-/Review-/Kapazitätskorrekturen in `e2a249e0`. Die vorhandene Installation bleibt auf ihrem vorher geprüften Stand; das neue Release liegt separat bereit und wurde nicht installiert. Nach Codeänderungen passende App und Daemon neu bauen; gleichbleibende Versionen allein beweisen keinen identischen Quellstand.
 2. Die unten aufgeführten aktuellen Gesamtläufe sind bestätigt. Neue Änderungen gezielt prüfen; vier bestehende Lint-Warnungen getrennt halten.
 3. Windows-GUI-Smoke bei Änderungen wiederholen. `bun run test:e2e` baut unter Windows ohne `wdio` und verwendet den externen Treiber. `MAESTRO_E2E_BINARY` kann eine installierte oder Debug-Binary auswählen. `MAESTRO_E2E_SCREENSHOT` speichert einen Screenshot. Die E2E-Konfiguration isoliert Custom-App und Daemon über `MAESTRO_CUSTOM_DATA_DIR`.
-4. Einen deterministischen Fake-ACP-Agenten als Test-Fixture bauen und B/C/D vollständig über echte ACP-Sessions prüfen: strukturierte Planübergabe, parallele Starts, menschliche Merge-Gates, integrierte Basis, Rückfrage an denselben Worker, Reviewer-/Rework-Schleife. Vorhandener Wire-Test bildet nur einen Teil von B ab und ersetzt diese Tests nicht.
+4. Fake-ACP-Fixture und Spawn-/Reload-Wire-Regression sind vorhanden. B/C/D vollständig über echte ACP-Sessions prüfen: strukturierte Planübergabe, parallele Starts, menschliche Merge-Gates, integrierte Basis, Rückfrage an denselben Worker, Reviewer-/Rework-Schleife. Das unten dokumentierte reale Feature wartet hierfür auf menschliche Planfreigabe. Wire-Tests allein ersetzen diese Abnahme nicht.
 5. Pause/Resume/Cancel vollständig schließen: Pausierte nicht kooperierende Provider zeitlich begrenzt stoppen; beim Resume neue offene Arbeit und verlorene/fehlgeschlagene Turns gezielt fortsetzen. Derzeit öffnet Resume die Startsperre, benötigt aber teilweise manuelles Task-Retry. Terminalprozesse, die der Host für ACP erzeugt, gesondert in die Prozessabnahme aufnehmen.
 6. Recovery E: App schließen/öffnen und Daemon töten/neustarten, offene Entscheidungen/Session-Schlüssel/Claims/Integrationen rekonstruieren, kein erneuter Abschluss. Zustellung an inaktive/dormante Sessions muss die vorhandene unterstützte Reload-Strecke nutzen bzw. eine sichtbare Ersatzsession mit Übergabe erstellen. `Submitted` nicht blind wiederholen.
 7. Team-Readiness: Installation, geprüfte ACP-Fähigkeiten, Auth und Laufzeitfehler getrennt anzeigen und serverseitig valide Eignung prüfen. Member-Limit/Reviewer-Zuordnung/Orchestrator müssen auch in Harness-/Maschinenlimits einfließen. Aktuelle Feature-/Member-Zählung basiert auf Task-Phasen und ist noch nicht der volle Session-Limit-Nachweis.
 8. Feature-Modell/GUI: Priorität, erlaubte Mitglieder als bewusste Auswahl, Dokumente, Meilensteine, Entscheidungslog, Zuordnung bestehender Tasks, strukturierte Findings/Prüfnachweise und Abschlussbericht ergänzen. Eigener kompakter Orchestrator-Chat, Kanban-Gruppierung, Blockierungsgründe und Freigaben fehlen noch.
 9. Laufzeit-/Aktionsbudgets sowie höchstens zwei technische Retries bei sicher vorübergehenden Fehlern, gleiche Fehler eskalieren, Auth/Quote/MCP-Secret-Blockaden sichtbar pausieren. Token/Kosten nur bei echten Provider-Daten.
 10. Sonderfälle der Integration: NoChanges-Tasks benötigen eine explizite menschliche Bestätigung; PR-Integration muss lokale verfügbare Commit-Basis bestätigen; Reparatur nach erfolgreichem Git-Merge aber fehlgeschlagener DB-Finalisierung muss idempotent und in der GUI erreichbar sein. Kein erneuter unklarer Provider-/Git-Auftrag.
-11. Drei reale installierte Harnesses für A ohne zusätzliche Kosten/Anmeldung prüfen; falls das nicht möglich ist, konkreten Blocker melden. Installation/Start/gebündelter Windows-Daemon sind geprüft. Getrennter Parallelbetrieb mit offizieller Installation und manuelle Gameplay-/Visual-Akzeptanz bleiben offen.
+11. Drei reale authentifizierte Harnesses sind jetzt mit minimalen tatsächlichen Provider-Turns geprüft. Installation/Start/gebündelter Windows-Daemon sind geprüft. Getrennter Parallelbetrieb mit offizieller Installation und manuelle Gameplay-/Visual-Akzeptanz bleiben offen.
 12. Dokumentation aktualisieren und stabile Fortschritte lokal committen.
 
 ## Befehle und Artefakte
@@ -109,8 +109,9 @@ Bestanden in dieser Fortsetzung:
   Feature-Erstellung, App-Prozessneustart, gespeichertes Feature wieder öffnen und abbrechen.
   Log: `%TEMP%/maestro-custom-gui-orchestration7.log`. Screenshots: `maestro-custom-agent-team.png`
   und `maestro-custom-feature.png` im TEMP-Verzeichnis. Kein bezahlter Feature-Turn in diesem Test.
-- Vier Node-Tests für authentifizierte Daemon-Frames, fragmentierte Antworten, Pushes,
-  Verbindungsverlust und oversized Frames. Aufruf: `node --test scripts/custom-desktop.test.mjs`.
+- Sechs Node-Tests für authentifizierte Daemon-Frames, fragmentierte Antworten, Pushes,
+  Verbindungsverlust, oversized Frames, Snapshot-Antworten und eine absolute Frist trotz
+  kontinuierlicher Pushes. Aufruf: `node --test scripts/custom-desktop.test.mjs`.
 - Frontend: 1573 Tests / 157 Dateien. Lint: nur die vier vorher bekannten React-Purity-Warnungen.
 - Daemon nach Worker-Kontext-/Review-Gate-/Spawn-/Kapazitäts-Ergänzungen: 391 Unit-Tests,
   62 Protokolltests und 17 Wire-Integrationstests. Der Wire-Lauf wurde mit einem eigenen
@@ -157,6 +158,11 @@ angelegt und einen echten Codex-Planner über den Dev-Daemon gestartet. Das Erge
 ein persistenter validierter Plan mit drei Aufgaben im Status **AwaitingApproval**.
 Die menschliche Planfreigabe wurde im Chat angefragt und ist noch ausstehend.
 Keine Worker wurden ohne diese Freigabe gestartet.
+
+Nach dem Dev-App- und Dev-Daemon-Neustart wurde derselbe Snapshot erneut über die
+authentifizierte Schnittstelle gelesen: `AwaitingApproval`, drei geplante Aufgaben,
+keine gestarteten Child-Tasks. Das beweist Plan-Persistenz, nicht die Wiederaufnahme
+eines bereits laufenden Worker-Turns. Beide Desktop-Fenster sind weiter geöffnet.
 
 - Projekt: `C:/Users/mehme/AppData/Local/Temp/maestro-feature-acceptance-tTNKAH`.
 - Feature: `588c7585-f479-4c4d-b976-ce38e925e2e7`, Orchestrator-Task 1.
