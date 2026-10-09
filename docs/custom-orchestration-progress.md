@@ -33,18 +33,18 @@ Tatsächlich bestanden:
 - Echter Daemon/Git-Test: drei Child-Tasks, idempotente Planfreigabe, isolierter Feature-Branch, unverändertes Main, ungültiger Commit abgewiesen.
 - Regressionen: leerer Planner-Abschluss, Cancel während Spawn, konkurrierende SQLite-Claims, persistente/deduplizierte Nachrichten, DAG und Freigabe-/Integrationssperren, Windows-Kindprozessbeendigung.
 - `cargo check --workspace --locked -j 4` mit explizitem RC-Pfad bestanden.
-- Lint bestanden mit **vier bereits vorhandenen React-Purity-Warnungen**; beide Formatprüfungen bestanden. Nach letzten Änderungen erneut prüfen.
+- Lint bestanden mit **vier bereits vorhandenen React-Purity-Warnungen**; beide Formatprüfungen bestanden. Auch nach den letzten Änderungen bestätigt; E2E-TypeScript-Prüfung zusätzlich bestanden.
 
 Happy-DOM protokolliert weiterhin die bekannten Canvas-/Google-Fonts-Fetch-Abbrüche; Vitest zählt keine fehlgeschlagenen Tests deswegen. Das ist kein Nachweis eines funktionierenden Canvas-Netzwerks.
 
 Reale CLIs liefern Versionen: Claude Code 2.1.293, Codex CLI 0.161.0, Cursor Agent 2026.10.01-e373342. **Keine drei authentifizierten ACP-Harnesses verifiziert; Test A bleibt offen.** Keine Provider-Aufträge mit zusätzlichem Modellverbrauch ausgeführt.
 
-Windows-GUI-Smoke gegen die echte Debug-App ohne `wdio`: **5 bestanden** (Fenstertitel, Home, lokaler Rechner, IPC/DB, Version). Das erste Release startete wegen einer verbliebenen nativen Updater-Registrierung nicht; Registrierung und Permission sind korrigiert und der GUI-Lauf danach bestand. Der eingebettete Windows-WebDriver scheitert schon beim Kompilieren an inkompatiblen Windows/WebView2-Typen; Windows verwendet deshalb den erfolgreich geprüften externen Tauri-/Edge-Treiber. Der korrigierte Release-Installer wird noch geprüft; laufende Builds zählen nicht als bestanden. Eine offizielle Maestro-Installation ist auf diesem Rechner nicht vorhanden; tatsächlicher Parallelbetrieb bleibt offen.
+Windows-GUI-Smoke gegen die echte Debug-App ohne `wdio`: **5 bestanden** (Fenstertitel, Home, lokaler Rechner, IPC/DB, Version). Das erste Release startete wegen einer verbliebenen nativen Updater-Registrierung nicht; Registrierung und Permission sind korrigiert und der GUI-Lauf danach bestand. Der eingebettete Windows-WebDriver scheitert schon beim Kompilieren an inkompatiblen Windows/WebView2-Typen; Windows verwendet deshalb den erfolgreich geprüften externen Tauri-/Edge-Treiber. Der korrigierte Release-Build ohne `wdio` und NSIS-Installer sind bestanden (22,23 MiB). Installation unter `C:\Users\mehme\AppData\Local\MaestroCustomVerification` mit Exit-Code 0; gebündelter Daemon SHA-256 identisch mit Build-Asset, Version `0.35.1-protocol-14`. Installierte App entspricht der Release-Binary bis auf den erwarteten NSIS-Bundle-Marker (`UNK` → `NSS`). Auch gegen die installierte Release-App: **5 GUI-Smoke-Tests bestanden**, Exit-Code 0, Test-Daemon erfolgreich beendet. Screenshot `%TEMP%/maestro-custom-installed-home.png` visuell geprüft. Eine offizielle Maestro-Installation ist auf diesem Rechner nicht vorhanden; tatsächlicher Parallelbetrieb bleibt offen.
 
 ## Nächste Schritte in Reihenfolge
 
-1. Laufende Builds/Logs auswerten. Den letzten Quellstand erneut als Release ohne `wdio` bauen, weil während des ersten Cold-Builds weitere Schutzprüfungen entstanden sind. Daemon-Asset muss zum letzten Stand passen. Installer erst nach erfolgreichem Build als Ergebnis nennen.
-2. Gesamtläufe für Rust, Frontend, Lint und beide Formatprüfungen bestätigen. Neue Probleme beheben; alte Warnungen getrennt halten.
+1. Für die nächste Implementierung den aktuellen Stand `025f7581` verwenden. Release, Installation und GUI-Smoke sind für diesen Code geprüft. Nach Codeänderungen passende App und Daemon neu bauen; gleichbleibende Versionen allein beweisen keinen identischen Quellstand.
+2. Die unten aufgeführten aktuellen Gesamtläufe sind bestätigt. Neue Änderungen gezielt prüfen; vier bestehende Lint-Warnungen getrennt halten.
 3. Windows-GUI-Smoke bei Änderungen wiederholen. `bun run test:e2e` baut unter Windows ohne `wdio` und verwendet den externen Treiber. `MAESTRO_E2E_BINARY` kann eine installierte oder Debug-Binary auswählen. `MAESTRO_E2E_SCREENSHOT` speichert einen Screenshot. Die E2E-Konfiguration isoliert Custom-App und Daemon über `MAESTRO_CUSTOM_DATA_DIR`.
 4. Einen deterministischen Fake-ACP-Agenten als Test-Fixture bauen und B/C/D vollständig über echte ACP-Sessions prüfen: strukturierte Planübergabe, parallele Starts, menschliche Merge-Gates, integrierte Basis, Rückfrage an denselben Worker, Reviewer-/Rework-Schleife. Vorhandener Wire-Test bildet nur einen Teil von B ab und ersetzt diese Tests nicht.
 5. Pause/Resume/Cancel vollständig schließen: Pausierte nicht kooperierende Provider zeitlich begrenzt stoppen; beim Resume neue offene Arbeit und verlorene/fehlgeschlagene Turns gezielt fortsetzen. Derzeit öffnet Resume die Startsperre, benötigt aber teilweise manuelles Task-Retry. Terminalprozesse, die der Host für ACP erzeugt, gesondert in die Prozessabnahme aufnehmen.
@@ -53,7 +53,7 @@ Windows-GUI-Smoke gegen die echte Debug-App ohne `wdio`: **5 bestanden** (Fenste
 8. Feature-Modell/GUI: Priorität, erlaubte Mitglieder als bewusste Auswahl, Dokumente, Meilensteine, Entscheidungslog, Zuordnung bestehender Tasks, strukturierte Findings/Prüfnachweise und Abschlussbericht ergänzen. Eigener kompakter Orchestrator-Chat, Kanban-Gruppierung, Blockierungsgründe und Freigaben fehlen noch.
 9. Laufzeit-/Aktionsbudgets sowie höchstens zwei technische Retries bei sicher vorübergehenden Fehlern, gleiche Fehler eskalieren, Auth/Quote/MCP-Secret-Blockaden sichtbar pausieren. Token/Kosten nur bei echten Provider-Daten.
 10. Sonderfälle der Integration: NoChanges-Tasks benötigen eine explizite menschliche Bestätigung; PR-Integration muss lokale verfügbare Commit-Basis bestätigen; Reparatur nach erfolgreichem Git-Merge aber fehlgeschlagener DB-Finalisierung muss idempotent und in der GUI erreichbar sein. Kein erneuter unklarer Provider-/Git-Auftrag.
-11. Drei reale installierte Harnesses für A ohne zusätzliche Kosten/Anmeldung prüfen; falls das nicht möglich ist, konkreten Blocker melden. Windows-Installation/Start, gebündelten Daemon und getrennten Parallelbetrieb tatsächlich prüfen. Manuelle Gameplay-/Visual-Akzeptanz separat behandeln.
+11. Drei reale installierte Harnesses für A ohne zusätzliche Kosten/Anmeldung prüfen; falls das nicht möglich ist, konkreten Blocker melden. Installation/Start/gebündelter Windows-Daemon sind geprüft. Getrennter Parallelbetrieb mit offizieller Installation und manuelle Gameplay-/Visual-Akzeptanz bleiben offen.
 12. Dokumentation aktualisieren und stabile Fortschritte lokal committen.
 
 ## Befehle und Artefakte
@@ -73,6 +73,8 @@ bun run format:rust
 bun run tauri build --bundles nsis
 ```
 
-Logs des aktuellen Laufs liegen unter `%TEMP%/maestro-custom-*.log`, insbesondere `release2`, `e2e-build`, `rust-verified`, `rust-complete-check`, `tauri-verified`, `vitest-final`, `basis-test`, `mcp-gates`, `check-final`. Keine Credentials in Logs schreiben. Globale Custom-Daten nicht als Testdaten löschen.
+Installer: `target/release/bundle/nsis/Maestro Custom_0.35.1_x64-setup.exe`, SHA-256 `C36E46A0E294B987D4C337C13427E6FF015AD2511C132093332B8B1D796CC00D`. Installierte App: `C:\Users\mehme\AppData\Local\MaestroCustomVerification\maestro.exe`. Keine drei Harnesses und kein vollständiges Feature-Beispiel behaupten.
+
+Logs des aktuellen Laufs liegen unter `%TEMP%/maestro-custom-*.log`, insbesondere `release2`, `e2e-build`, `rust-verified`, `rust-complete-check`, `tauri-verified`, `vitest-final`, `basis-test`, `mcp-gates`, `check-final`. Keine Credentials in Logs schreiben. Globale Custom-Daten nicht als Testdaten löschen. Zwei ältere temporäre Testverzeichnisse (`%TEMP%/maestro-e2e-xaX7qW` und `maestro-e2e-JxRL9c`) können noch bestehen; ihre Test-Daemons sind beendet. Die automatische Freigabeprüfung blockierte das manuelle Löschen des ersten Verzeichnisses ohne nähere Begründung. Der letzte E2E-Cleanup bestand.
 
 Codegraph-Tool war in dieser Sitzung nicht verfügbar; vor einer Fortsetzung erneut verfügbare Tools prüfen. Repository-/Domain-`AGENTS.md` und `docs/automations-plan.md` beachten. Migrationen anhängen, Bindings generieren, keine `CLAUDE.md` hinzufügen.

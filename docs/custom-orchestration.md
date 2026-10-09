@@ -62,6 +62,15 @@ cargo test -p maestro --lib -j 4
 
 Für einen App-Build diese Variable entfernen. Development verwendet denselben Asset-Staging-Pfad: zuerst `bun run server:bundle`, dann `bun run tauri:dev` (dessen Unix-Shell-Skript unter PowerShell gegebenenfalls durch `bun run tauri dev` ersetzen).
 
+Ein Windows-NSIS-Release ohne `wdio` wurde am 2026-10-09 gebaut und unter
+`C:\Users\mehme\AppData\Local\MaestroCustomVerification` installiert. Der Installer liegt in
+`target/release/bundle/nsis/Maestro Custom_0.35.1_x64-setup.exe`. Der gebündelte Daemon stimmt
+per SHA-256 mit dem Build-Asset überein und meldet `0.35.1-protocol-14`. Die installierte App
+unterscheidet sich ausschließlich durch Tauri's drei Byte langen NSIS-Bundle-Marker (`UNK` → `NSS`)
+von der Build-Binary. Alle fünf Windows-GUI-Smoke-Tests bestanden gegen diese installierte App.
+Das belegt Packaging, Installation und Start, noch nicht die vollständige Feature-Abnahme A–G.
+Windows-E2E verwendet den externen Tauri-/Edge-Treiber; Details in `tests/e2e/README.md`.
+
 ## Noch offene Grenzen
 
 Es fehlen insbesondere vollständige Bereitschafts-/Auth-Anzeigen im Team, Dokumentreferenzen/Meilensteine, gezielte Zuordnung bestehender Tasks, separate strukturierte Entscheidungen/Review-Findings/Prüfnachweise, Ausführungsbudgets, zusätzliche Harness-Limits, technische Retry-/Eskalationsregeln, verlässliches automatisches Wiederanlaufen jeder pausierten oder verlorenen Session und vollständiger Nachrichten-Replay nach Daemon-Neustart. Die bestehenden drei Review-Korrekturrunden werden weiterverwendet. Reviewer werden aus erlaubten, aktivierten Teammitgliedern nach Priorität gewählt; ein anderer Harness wird bevorzugt. Ein fehlender Reviewer führt zur menschlichen Prüfung.
