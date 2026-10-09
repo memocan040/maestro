@@ -206,8 +206,8 @@ Nachgewiesen:
 
 - Frontend-Gesamtlauf: 1582 Tests / 159 Dateien
   (`%TEMP%/maestro-teamchat-all-vitest.log`).
-- Rust: 402 Daemon-Unit-Tests, 62 Protokolltests, 19 Wire-Tests. Der abschließende
-  Daemon-Lauf steht in `%TEMP%/maestro-teamchat-server-verified.log`.
+- Rust: 403 Daemon-Unit-Tests, 62 Protokolltests, 19 Wire-Tests. Der abschließende
+  Daemon-Lauf steht in `%TEMP%/maestro-teamchat-server-final-all.log`.
 - Windows-Tauri: 366 bestanden, zwei ignoriert, mit `MAESTRO_TEST_MANIFEST=1 --lib`
   (`%TEMP%/maestro-teamchat-tauri-final.log`). Generierte Bindings unverändert geprüft.
 - Workspace-Check bestanden (`%TEMP%/maestro-teamchat-workspace-final.log`).
@@ -227,8 +227,15 @@ Nachgewiesen:
   Orchestrator antwortet sichtbar. Nachweis: `chat-result.json`, Log
   `%TEMP%/maestro-teamchat-real-auto.log`. Das sind tatsächliche Provider-Aufrufe.
 - Windows-GUI mit neun unabhängigen Mitgliedern und Feature-/App-Neustart bestand
-  (`%TEMP%/maestro-teamchat-gui-debug2.log`). Der finale GUI-Lauf prüft zusätzlich
-  ausdrücklich die gespeicherte Chatnotiz und die verbreiterte Oberfläche.
+  (`%TEMP%/maestro-teamchat-gui-debug2.log`). Auch der finale Dev-GUI-Lauf mit gespeicherter
+  Chatnotiz und verbreiterter Oberfläche besteht: `%TEMP%/maestro-teamchat-gui-final-debug.log`
+  (3:17 Minuten). Screenshot: `%TEMP%/maestro-custom-feature.png`.
+
+Team Chat ist lokal in `a531701b` committed. `8a89a502` ergänzt den Regressionstest für
+einen gescheiterten ersten Chat-Claim: automatische Wiederholung bleibt gesperrt, eine
+ausdrückliche Benutzer-Wiederholung kann den Start erneut anfordern. Alle sieben Chat-
+Zustandstests und danach der vollständige Daemon-Lauf bestanden. Dev-Daemon und Datenbank
+laufen inzwischen mit Schema 13; kein aktiver Turn musste unterbrochen werden.
 
 Antigravity ist offiziell signiert und initialisierbar, verlangt aber die bisher
 fehlende Auth-Methode. Session-Erstellung, Prompt und tatsächlicher Reload bleiben
@@ -241,6 +248,11 @@ noch durch neue Tests verwendet. Neue Testprojekte erhielten ausschließlich eig
 Freigaben. Keine Worker-Ergebnisse wurden in Main integriert.
 
 Fortsetzungspunkt für die Auslieferungsprüfung: `node scripts/custom-desktop.mjs build`
-läuft mit Log `%TEMP%/maestro-teamchat-release-complete.log`. Nach erfolgreichem Build
-den echten GUI-Lauf mit `target/release/maestro.exe` ausführen, Installerpfad und Hash
-ergänzen und den Nachweis lokal committen. Nicht installieren und nicht pushen.
+läuft mit Log `%TEMP%/maestro-teamchat-release-complete.log` (Desktop-Kompilierung).
+Danach läuft bereits eine zweite sequenzielle Strecke: `bun run server:bundle` baut
+den Daemon mit dem abschließenden Recovery-Fix; `bun run tauri bundle --bundles nsis`
+bündelt diese externe Ressource mit der zuvor gebauten unveränderten Desktop-Binary.
+Logs: `%TEMP%/maestro-teamchat-release-daemon-final.log` und
+`%TEMP%/maestro-teamchat-installer-final.log`. Erst der zweite Installer ist maßgeblich.
+Danach echten GUI-Lauf mit `target/release/maestro.exe` ausführen, finalen Daemon-/Installer-
+Hash ergänzen und Nachweis lokal committen. Nicht installieren und nicht pushen.
