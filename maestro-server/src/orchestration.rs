@@ -2,6 +2,7 @@ use chrono::Utc;
 use maestro_protocol::{BranchMode, CreateTaskRequest, TaskStatus, WorkspaceMode};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
+pub mod chat;
 
 static WAKE: std::sync::OnceLock<tokio::sync::mpsc::Sender<()>> = std::sync::OnceLock::new();
 
@@ -148,7 +149,7 @@ pub fn feature_for_task(
 ) -> Result<Option<Feature>, String> {
     let id: Option<String> = conn
         .query_row(
-            "SELECT feature_id FROM feature_tasks WHERE project_path = ?1 AND task_id = ?2",
+            "SELECT feature_id FROM feature_tasks WHERE project_path = ?1 AND task_id = ?2 UNION SELECT feature_id FROM feature_consultations WHERE project_path=?1 AND task_id=?2",
             params![project, task],
             |r| r.get(0),
         )
@@ -164,11 +165,13 @@ pub fn check_start(conn: &Connection, project: &str, task: i32) -> Result<(), St
         }
     }
     if let Some(f) = feature_for_task(conn, project, task)? {
-        if f.status != "Running" {
+        if matches!(f.status.as_str(), "Paused" | "Cancelled" | "Completed") {
             return Err(format!("Feature is {}", f.status));
         }
-        let active: i64 = conn.query_row("SELECT COUNT(*) FROM feature_tasks f JOIN tasks t ON t.project_path = f.project_path AND t.id = f.task_id
-            WHERE f.project_path = ?1 AND f.feature_id = ?2 AND t.id != ?3 AND t.phase_status IN ('Running', 'Blocked')", params![project, f.id, task], |r| r.get(0)).map_err(|e| e.to_string())?;
+        if f.status != "Running" && !chat::is_consultation(conn, project, task)? {
+            return Err(format!("Feature is {}", f.status));
+        }
+        let active: i64 = conn.query_row("SELECT COUNT(*) FROM tasks t WHERE t.project_path=?1 AND t.id != ?3 AND t.phase_status IN ('Running','Blocked') AND (EXISTS(SELECT 1 FROM feature_tasks f WHERE f.project_path=t.project_path AND f.feature_id=?2 AND f.task_id=t.id) OR EXISTS(SELECT 1 FROM feature_consultations c WHERE c.project_path=t.project_path AND c.feature_id=?2 AND c.task_id=t.id))", params![project, f.id, task], |r| r.get(0)).map_err(|e| e.to_string())?;
         if active >= f.max_parallel as i64 {
             return Err("Feature parallelism limit reached".into());
         }
@@ -233,7 +236,7 @@ fn execution_member(
     }
     let id: String = conn
         .query_row(
-            "SELECT member_id FROM feature_tasks WHERE project_path = ?1 AND task_id = ?2",
+            "SELECT member_id FROM feature_tasks WHERE project_path = ?1 AND task_id = ?2 UNION SELECT member_id FROM feature_consultations WHERE project_path=?1 AND task_id=?2",
             params![project, task],
             |row| row.get(0),
         )
@@ -361,11 +364,22 @@ fn assigned_worker(
 }
 
 pub fn snapshot(conn: &Connection, project: &str) -> Result<Value, String> {
-    let mut stmt = conn.prepare("SELECT id, feature_id, sender_task, recipient_task, kind, body, state, created_at FROM orchestration_messages WHERE project_path = ?1 ORDER BY rowid").map_err(|e| e.to_string())?;
-    let messages = stmt.query_map([project], |r| Ok(json!({"id": r.get::<_,String>(0)?, "feature_id":r.get::<_,String>(1)?, "sender_task":r.get::<_,Option<i32>>(2)?, "recipient_task":r.get::<_,i32>(3)?, "kind":r.get::<_,String>(4)?, "body":r.get::<_,String>(5)?, "state":r.get::<_,String>(6)?, "created_at":r.get::<_,String>(7)?})))
+    let mut stmt = conn.prepare("SELECT id, feature_id, sender_task, recipient_task, kind, body, state, created_at, sender_name, sender_agent, sender_role FROM orchestration_messages WHERE project_path = ?1 ORDER BY rowid").map_err(|e| e.to_string())?;
+    let messages = stmt.query_map([project], |r| Ok(json!({"id": r.get::<_,String>(0)?, "feature_id":r.get::<_,String>(1)?, "sender_task":r.get::<_,Option<i32>>(2)?, "recipient_task":r.get::<_,i32>(3)?, "kind":r.get::<_,String>(4)?, "body":r.get::<_,String>(5)?, "state":r.get::<_,String>(6)?, "created_at":r.get::<_,String>(7)?,"sender_name":r.get::<_,Option<String>>(8)?,"sender_agent":r.get::<_,Option<String>>(9)?,"sender_role":r.get::<_,Option<String>>(10)?})))
         .map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    let mut bindings=conn.prepare("SELECT task_id,member_id FROM feature_tasks WHERE project_path=?1 UNION SELECT task_id,member_id FROM feature_consultations WHERE project_path=?1").map_err(|e|e.to_string())?;
+    let mut task_members = bindings
+        .query_map([project], |r| {
+            Ok((r.get::<_, i32>(0)?, r.get::<_, String>(1)?))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<std::collections::BTreeMap<_, _>, _>>()
+        .map_err(|e| e.to_string())?;
+    for f in features(conn, project)? {
+        task_members.insert(f.orchestrator_task, f.orchestrator_member);
+    }
     Ok(
-        json!({"members":bodies::<TeamMember>(conn,"agent_team",project)?,"features":features(conn,project)?,"messages":messages}),
+        json!({"members":bodies::<TeamMember>(conn,"agent_team",project)?,"features":features(conn,project)?,"messages":messages,"discussions":chat::discussions(conn,project)?,"chat_settings":chat::settings(conn,project)?,"task_members":task_members}),
     )
 }
 
@@ -387,6 +401,23 @@ fn actor_snapshot(conn: &Connection, project: &str, actor: Option<i32>) -> Resul
                         || entry["sender_task"].as_i64() == Some(task as i64)
                         || entry["recipient_task"].as_i64() == Some(task as i64))
             });
+            let excess = messages.len().saturating_sub(20);
+            messages.drain(..excess);
+        }
+        if let Some(discussions) = value["discussions"].as_array_mut() {
+            discussions.retain(|d| d["feature_id"] == f.id);
+        }
+        let mut task_ids = f.task_ids.clone();
+        task_ids.push(f.orchestrator_task);
+        if let Some(discussions) = value["discussions"].as_array() {
+            for discussion in discussions {
+                if let Some(ids) = discussion["task_ids"].as_array() {
+                    task_ids.extend(ids.iter().filter_map(|id| id.as_i64().map(|id| id as i32)));
+                }
+            }
+        }
+        if let Some(mapping) = value["task_members"].as_object_mut() {
+            mapping.retain(|id, _| id.parse::<i32>().is_ok_and(|id| task_ids.contains(&id)));
         }
         if let Some(members) = value["members"].as_array_mut() {
             members.retain(|entry| {
@@ -411,6 +442,10 @@ pub fn answer(
         return actor_snapshot(conn, project, actor);
     }
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    if chat::answer(&tx, project, &operation, actor)? {
+        tx.commit().map_err(|e| e.to_string())?;
+        return snapshot(conn, project);
+    }
     match operation {
         Operation::Snapshot => unreachable!(),
         Operation::SaveMember { member: m } => {
@@ -432,7 +467,7 @@ pub fn answer(
                     || f.allowed_members.contains(&member_id)
                     || f.plan.iter().any(|t| t.member_id == member_id)
             });
-            let assigned: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM feature_tasks WHERE project_path=?1 AND member_id=?2)",params![project,member_id],|r|r.get(0)).map_err(|e|e.to_string())?;
+            let assigned: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM feature_tasks WHERE project_path=?1 AND member_id=?2 UNION SELECT 1 FROM feature_consultations WHERE project_path=?1 AND member_id=?2)",params![project,member_id],|r|r.get(0)).map_err(|e|e.to_string())?;
             if referenced || assigned {
                 return Err("This member is referenced by saved features or tasks. Deactivate it instead; history and sessions are preserved.".into());
             }
@@ -671,23 +706,50 @@ pub fn answer(
                     "review_ready",
                     "review_feedback",
                     "instruction",
+                    "decision",
+                    "note",
+                    "team_instruction",
                 ]
                 .contains(&kind.as_str())
             {
                 return Err("Invalid message".into());
             }
             let recipient = recipient_task.unwrap_or(f.orchestrator_task);
-            if recipient != f.orchestrator_task && !f.task_ids.contains(&recipient) {
+            if recipient != f.orchestrator_task
+                && !f.task_ids.contains(&recipient)
+                && !chat::belongs(&tx, project, &f.id, recipient)?
+            {
                 return Err("Recipient is outside this feature".into());
             }
             if let Some(sender) = actor {
                 if sender != f.orchestrator_task
-                    && (!f.task_ids.contains(&sender) || recipient != f.orchestrator_task)
+                    && ((!f.task_ids.contains(&sender)
+                        && !chat::belongs(&tx, project, &f.id, sender)?)
+                        || recipient != f.orchestrator_task)
                 {
                     return Err("Workers communicate through their feature orchestrator".into());
                 }
             }
+            let repeated:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM orchestration_messages WHERE project_path=?1 AND feature_id=?2 AND sender_task IS ?3 AND recipient_task=?4 AND kind=?5 AND body=?6)",params![project,feature_id,actor,recipient,kind,body],|r|r.get(0)).map_err(|e|e.to_string())?;
+            if repeated {
+                return snapshot(&tx, project);
+            }
             tx.execute("INSERT INTO orchestration_messages(id,project_path,feature_id,dedupe_key,sender_task,recipient_task,kind,body,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(project_path,feature_id,dedupe_key) DO NOTHING",params![uuid::Uuid::new_v4().to_string(),project,feature_id,dedupe_key,actor,recipient,kind,body,Utc::now().to_rfc3339()]).map_err(|e|e.to_string())?;
+            if matches!(kind.as_str(), "progress" | "note" | "decision") {
+                tx.execute("UPDATE orchestration_messages SET state='Recorded' WHERE project_path=?1 AND feature_id=?2 AND dedupe_key=?3 AND state='Pending'",params![project,feature_id,dedupe_key]).map_err(|e|e.to_string())?;
+            }
+            if recipient == f.orchestrator_task
+                && actor != Some(f.orchestrator_task)
+                && !matches!(kind.as_str(), "progress" | "note" | "decision")
+            {
+                chat::request_start(&tx, project, recipient)?;
+            }
+            if let Some(task) = actor {
+                if let Some(m) = execution_member(&tx, project, task)? {
+                    let p = profile(project, &m)?;
+                    tx.execute("UPDATE orchestration_messages SET sender_name=?1,sender_agent=?2,sender_role=?3 WHERE project_path=?4 AND feature_id=?5 AND dedupe_key=?6 AND sender_name IS NULL AND sender_task=?7",params![m.name,p.agent_id,if task==f.orchestrator_task {"Orchestrator"} else if chat::is_consultation(&tx,project,task)? {"Consultant"} else if crate::task_store::get(&tx,project,task)?.is_some_and(|t|t.phase==Some(maestro_protocol::TaskPhase::SelfReview)) {"Reviewer"} else {"Worker"},project,feature_id,dedupe_key,task]).map_err(|e|e.to_string())?;
+                }
+            }
         }
         Operation::Acknowledge { message_id } => {
             let recipient: i32=tx.query_row("SELECT recipient_task FROM orchestration_messages WHERE project_path=?1 AND id=?2",params![project,message_id],|r|r.get(0)).map_err(|_|"Message not found".to_string())?;
@@ -715,7 +777,12 @@ pub fn answer(
                 return Err("Only the user may retry uncertain delivery".into());
             }
             tx.execute("UPDATE orchestration_messages SET state='Pending' WHERE project_path=?1 AND id=?2 AND state='Submitted'",params![project,message_id]).map_err(|e|e.to_string())?;
+            tx.execute("UPDATE feature_chat_starts SET state='Pending' WHERE project_path=?1 AND state='Uncertain' AND task_id=(SELECT recipient_task FROM orchestration_messages WHERE project_path=?1 AND id=?2)",params![project,message_id]).map_err(|e|e.to_string())?;
         }
+        Operation::ChatSettings { .. }
+        | Operation::StartDiscussion { .. }
+        | Operation::AdvanceDiscussion { .. }
+        | Operation::CloseDiscussion { .. } => unreachable!(),
     }
     tx.commit().map_err(|e| e.to_string())?;
     actor_snapshot(conn, project, actor)
@@ -737,7 +804,7 @@ pub fn task_event(
         "Task #{} {}: {:?} / {:?} / {:?}. Summary: {}",
         task.id, task.title, task.status, task.phase, task.phase_status, summary
     );
-    conn.execute("INSERT INTO orchestration_messages(id,project_path,feature_id,dedupe_key,sender_task,recipient_task,kind,body,created_at) VALUES(?1,?2,?3,?4,?5,?6,'progress',?7,?8) ON CONFLICT(project_path,feature_id,dedupe_key) DO NOTHING",
+    conn.execute("INSERT INTO orchestration_messages(id,project_path,feature_id,dedupe_key,sender_task,recipient_task,kind,body,state,created_at,sender_role) VALUES(?1,?2,?3,?4,?5,?6,'progress',?7,'Recorded',?8,'System') ON CONFLICT(project_path,feature_id,dedupe_key) DO NOTHING",
         params![uuid::Uuid::new_v4().to_string(),project,f.id,format!("turn:{}:{}",task.id,task.updated_at),task.id,f.orchestrator_task,body,Utc::now().to_rfc3339()]).map_err(|e|e.to_string())?;
     notify();
     Ok(())
@@ -824,17 +891,40 @@ pub async fn request(
                 .await?;
         }
     }
+    let read_only = matches!(operation, Operation::Snapshot);
     let result = answer(&mut *store.lock().await, project, operation, actor);
-    if result.is_ok() {
+    if result.is_ok() && !read_only {
         notify();
     }
     result
 }
 
 pub fn prompt(conn: &Connection, project: &str, task: i32) -> Result<Option<String>, String> {
+    if chat::is_consultation(conn, project, task)? {
+        let t = crate::task_store::get(conn, project, task)?.ok_or("Consultation task missing")?;
+        return Ok(Some(t.description.unwrap_or_default()));
+    }
     let Some(f) = orchestrator_for(conn, project, task)? else {
         return Ok(None);
     };
+    if chat::active_turn(conn, project, task)? {
+        let context = actor_snapshot(conn, project, Some(task))?;
+        let mut stmt=conn.prepare("SELECT id,kind,body FROM orchestration_messages WHERE project_path=?1 AND recipient_task=?2 AND state='Submitted' ORDER BY rowid LIMIT 8").map_err(|e|e.to_string())?;
+        let messages = stmt
+            .query_map(params![project, task], |r| {
+                Ok(format!(
+                    "Message {} ({}): {}",
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?
+                ))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+            .join("\n\n");
+        return Ok(Some(format!("You are the persistent feature orchestrator. This is a bounded conversation; create or revise a plan only if the user explicitly requests planning. First use the stored feature/task state below. Process these submitted messages addressed to task {task}, acknowledge_feature_message after processing, and send_feature_message for targeted worker questions. Answer the user concisely in your final message. Do not re-analyze the repository unless specifically needed. Never approve plans, integrate Git, or start implementation through chat. Consult additional agents only for a concrete question, using the bounded discussion tools. Feature context: {context}\n\n{messages}")));
+    }
     let team = bodies::<TeamMember>(conn, "agent_team", project)?;
     Ok(Some(format!("You are the persistent project orchestrator for feature {}. Do not implement code. Analyze the project and coordinate its existing tasks. Submit a structured plan through submit_feature_plan with feature_id and tasks (key, title, instructions, acceptance, member_id, depends_on). Human plan approval starts workers. Worker integration always requires human approval. Use send_feature_message to resolve specific worker questions, and acknowledge_feature_message after processing each delivered message. Do not duplicate completed or existing tasks. No polling or recursive discussions. Feature: {}\nTeam: {}",f.id,serde_json::to_string(&f).map_err(|e|e.to_string())?,serde_json::to_string(&team).map_err(|e|e.to_string())?)))
 }
@@ -847,9 +937,13 @@ pub fn worker_context(
     let Some(f) = feature_for_task(conn, project, task)? else {
         return Ok(None);
     };
+    if chat::is_consultation(conn, project, task)? {
+        return Ok(None);
+    }
+    let decisions = chat::decisions(conn, project, &f.id)?;
     Ok(Some(format!(
         "## Feature coordination\nFeature ID: {}\nGoal: {}\nAcceptance: {}\nYour task ID: {}. The orchestrator task is {}. Report progress, questions, blockers and review feedback with send_feature_message (feature_id above, recipient_task omitted, kind, body and a stable dedupe_key). Identity comes from your session; do not impersonate another task. Acknowledge delivered messages with acknowledge_feature_message. For a question or blocker, omit the completion marker and wait for the orchestrator's answer in this same session. Do not poll, delegate tasks, contact other workers, or integrate branches. Human approval is required for every integration.",
-        f.id, f.goal, f.acceptance.join("; "), task, f.orchestrator_task
+        f.id, format!("{}\nRecorded feature decisions (not Git/plan approvals): {}",f.goal,decisions), f.acceptance.join("; "), task, f.orchestrator_task
     )))
 }
 
@@ -879,7 +973,8 @@ pub async fn pump(
                 let Some(task) = binding.meta.task_id else {
                     continue;
                 };
-                if task != f.orchestrator_task && !f.task_ids.contains(&task) {
+                let consultant = chat::belongs(&conn, &project, &f.id, task)?;
+                if task != f.orchestrator_task && !f.task_ids.contains(&task) && !consultant {
                     continue;
                 }
                 if matches!(f.status.as_str(), "Cancelled" | "Completed") {
@@ -898,13 +993,20 @@ pub async fn pump(
                     }
                     continue;
                 }
+                if consultant {
+                    let state:String=conn.query_row("SELECT state FROM feature_consultations WHERE project_path=?1 AND task_id=?2",params![project,task],|r|r.get(0)).map_err(|e|e.to_string())?;
+                    if state == "Closed" {
+                        close.push(sid.clone());
+                        continue;
+                    }
+                }
                 if session
                     .turn_active
                     .load(std::sync::atomic::Ordering::SeqCst)
                 {
                     continue;
                 }
-                if task != f.orchestrator_task {
+                if task != f.orchestrator_task && !consultant {
                     let Some(t) = crate::task_store::get(&conn, &project, task)? else {
                         continue;
                     };
@@ -948,6 +1050,9 @@ pub async fn pump(
                     .cmd_tx
                     .try_send(crate::sessions::SessionCommand::Prompt(prompt))
                     .map_err(|e| e.to_string())?;
+                if task == f.orchestrator_task {
+                    chat::mark_turn(&conn, &project, task)?;
+                }
                 // Submitted means handed to ACP, not exactly-once execution. Only the recipient's ack confirms processing.
                 for (id, _, _) in rows {
                     conn.execute("UPDATE orchestration_messages SET state='Submitted' WHERE id=?1 AND state='Pending'",[id]).map_err(|e|e.to_string())?;
@@ -975,9 +1080,22 @@ pub fn record_turn(
     message: &str,
     failed: bool,
 ) -> Result<bool, String> {
+    if chat::record_result(conn, project, task, message, failed)? {
+        return Ok(true);
+    }
     if let Some(mut f) = orchestrator_for(conn, project, task)? {
+        let conversation = chat::active_turn(conn, project, task)?;
+        conn.execute(
+            "UPDATE feature_chat_starts SET state='Idle' WHERE project_path=?1 AND task_id=?2",
+            params![project, task],
+        )
+        .map_err(|e| e.to_string())?;
         crate::task_store::record_unfinished(conn, project, task, Some("Drafting"), message)?;
-        if failed || (f.status == "Planning" && f.plan.is_empty()) {
+        let m = member(conn, project, &f.orchestrator_member)?;
+        let p = profile(project, &m)?;
+        let body = message.chars().take(4096).collect::<String>();
+        conn.execute("INSERT INTO orchestration_messages(id,project_path,feature_id,dedupe_key,sender_task,recipient_task,kind,body,state,created_at,sender_name,sender_agent,sender_role) VALUES(?1,?2,?3,?4,?5,?5,'answer',?6,'Recorded',?7,?8,?9,'Orchestrator') ON CONFLICT(project_path,feature_id,dedupe_key) DO NOTHING",params![uuid::Uuid::new_v4().to_string(),project,f.id,format!("orchestrator-result:{task}:{body}"),task,body,Utc::now().to_rfc3339(),m.name,p.agent_id]).map_err(|e|e.to_string())?;
+        if failed || (!conversation && f.status == "Planning" && f.plan.is_empty()) {
             f.status = "Blocked".into();
             save_feature(conn, project, &f)?;
             crate::task_store::transition::apply(
@@ -1005,7 +1123,7 @@ pub fn record_turn(
 mod tests {
     use super::*;
 
-    fn fixture() -> (tempfile::TempDir, Connection, String) {
+    pub(super) fn fixture() -> (tempfile::TempDir, Connection, String) {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().to_string_lossy().replace('\\', "/");
         std::fs::create_dir(directory.path().join(".maestro")).unwrap();
@@ -1064,7 +1182,7 @@ mod tests {
         (directory, conn, path)
     }
 
-    fn plan() -> Vec<PlannedTask> {
+    pub(super) fn plan() -> Vec<PlannedTask> {
         (0..3)
             .map(|n| PlannedTask {
                 key: format!("t{n}"),

@@ -193,3 +193,54 @@ Worker-Turns, Rückfrage, Antwort, Review und Rework beobachten und Prüfbelege 
 Vor jeder Integration die konkreten Commits/Diffs präsentieren und Freigabe einholen.
 Main bleibt unverändert. Dieser Planner-Lauf wurde über die Daemon-Schnittstelle gestartet;
 der separate GUI-Test belegt die GUI-Einstiege, noch keinen zusammenhängenden realen GUI-Lauf.
+
+## Fortsetzung 10. Oktober 2026: dynamisches Team und Team Chat
+
+Branch `codex/custom-orchestration`. Dynamische Teamverwaltung und offizielle
+Antigravity-Erkennung sind lokal in `24f70c1e` abgeschlossen. Team Chat ergänzt
+Protokoll 16 und append-only Daemon-Migrationen 12–13. Die Architektur und Bedienung
+stehen in `custom-orchestration.md`, einschließlich der Grenzen bei nicht reloadfähigen
+oder unklar unterbrochenen Sessions.
+
+Nachgewiesen:
+
+- Frontend-Gesamtlauf: 1582 Tests / 159 Dateien
+  (`%TEMP%/maestro-teamchat-all-vitest.log`).
+- Rust: 402 Daemon-Unit-Tests, 62 Protokolltests, 19 Wire-Tests. Der abschließende
+  Daemon-Lauf steht in `%TEMP%/maestro-teamchat-server-verified.log`.
+- Windows-Tauri: 366 bestanden, zwei ignoriert, mit `MAESTRO_TEST_MANIFEST=1 --lib`
+  (`%TEMP%/maestro-teamchat-tauri-final.log`). Generierte Bindings unverändert geprüft.
+- Workspace-Check bestanden (`%TEMP%/maestro-teamchat-workspace-final.log`).
+- Sechs Node-Tests bestanden; die Test-Protokollerwartung wurde auf 16 aktualisiert.
+  Ein Windows-Reset beim absichtlichen Deadline-Abbruch wird ausschließlich als
+  erwartetes `ECONNRESET` behandelt.
+- Zwei ausgewählte Fake-ACP-Agents beantworteten eine Konsultation. Unbeteiligte
+  Mitglieder starteten nicht. Nachrichten und Besprechungen blieben nach App-Reattach
+  und einem tatsächlichen Daemon-Neustart erhalten. Danach startete die erste fachliche
+  Nachricht einen Orchestrator-Chat ohne Plan oder Implementierungs-Child-Tasks.
+- Der Chat-Start-Test erhält das ursprüngliche Gate: Ein expliziter Planner ohne Plan
+  wird weiterhin blockiert. Anzeigen, Notizen und Snapshots starten keine Agents.
+  Ein Wire-Test verhindert die reproduzierte Snapshot-/Invalidierungsschleife.
+- Echte authentifizierte Codex-/Cursor-Kommunikation bestand im isolierten Projekt
+  `%TEMP%/maestro-team-routing-iqTxI4`: erste Nutzernachricht startet den Orchestrator,
+  dieser fragt die bestehende Cursor-Session, deren Antwort wird bestätigt und der
+  Orchestrator antwortet sichtbar. Nachweis: `chat-result.json`, Log
+  `%TEMP%/maestro-teamchat-real-auto.log`. Das sind tatsächliche Provider-Aufrufe.
+- Windows-GUI mit neun unabhängigen Mitgliedern und Feature-/App-Neustart bestand
+  (`%TEMP%/maestro-teamchat-gui-debug2.log`). Der finale GUI-Lauf prüft zusätzlich
+  ausdrücklich die gespeicherte Chatnotiz und die verbreiterte Oberfläche.
+
+Antigravity ist offiziell signiert und initialisierbar, verlangt aber die bisher
+fehlende Auth-Methode. Session-Erstellung, Prompt und tatsächlicher Reload bleiben
+deshalb offen; Details und die originale Fehlermeldung stehen in der Architekturdatei.
+Es wurde keine Anmeldung vorgenommen und keine vorhandene CLI ersetzt.
+
+Der vorbereitete Abnahmelauf wurde am Ende der Implementierung ausschließlich lesend
+geprüft: `AwaitingApproval`, drei Planeinträge, `task_ids: []`. Er wurde weder freigegeben
+noch durch neue Tests verwendet. Neue Testprojekte erhielten ausschließlich eigene
+Freigaben. Keine Worker-Ergebnisse wurden in Main integriert.
+
+Fortsetzungspunkt für die Auslieferungsprüfung: `node scripts/custom-desktop.mjs build`
+läuft mit Log `%TEMP%/maestro-teamchat-release-complete.log`. Nach erfolgreichem Build
+den echten GUI-Lauf mit `target/release/maestro.exe` ausführen, Installerpfad und Hash
+ergänzen und den Nachweis lokal committen. Nicht installieren und nicht pushen.

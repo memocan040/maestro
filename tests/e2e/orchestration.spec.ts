@@ -112,7 +112,15 @@ describe("Custom orchestration in the real desktop app", function () {
     await browser.refresh();
     await visible("orchestration-demo");
     await click("[data-home-project] > button");
-    await visible("Features / New Feature");
+    try {
+      await visible("Features / New Feature", 120_000);
+    } catch (error) {
+      console.log(
+        "Before-hook GUI state:",
+        await browser.execute(() => document.body.innerText.slice(0, 6000)),
+      );
+      throw error;
+    }
   });
 
   afterEach(async function () {
@@ -182,6 +190,11 @@ describe("Custom orchestration in the real desktop app", function () {
     await button("Create feature");
     await visible("GUI verified feature · Planning");
     await visible("Start planning");
+    await visible("Team Chat");
+    await click("//select[@aria-label='Chat message kind']/option[@value='note']");
+    await fill('[aria-label="Team chat message"]', "GUI chat note survives restart");
+    await button("Send message");
+    await visible("GUI chat note survives restart");
     await browser.saveScreenshot(join(tmpdir(), "maestro-custom-feature.png"));
     // Do not start paid/provider work in this GUI-entry test. Real harness acceptance
     // is a separate lane; creating a feature alone must never start its orchestrator.
@@ -211,6 +224,7 @@ describe("Custom orchestration in the real desktop app", function () {
     await button("GUI verified feature · Planning");
     expect(await browser.execute(() => document.body.innerText)).toContain("GUI verified feature");
     await visible("Start planning");
+    await visible("GUI chat note survives restart");
     await button("cancel");
     await visible("GUI verified feature · Cancelled");
     await closeDialog();

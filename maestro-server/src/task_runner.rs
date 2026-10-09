@@ -213,6 +213,17 @@ pub(crate) fn begin(
     pushes: &mut Vec<ServerResponse>,
 ) -> Result<Begun, NotBegun> {
     let project_path = crate::automations::canonical_project_path(&request.project_path);
+    let consultant =
+        crate::orchestration::chat::is_consultation(conn, &project_path, request.task_id)?;
+    let coordinator =
+        crate::orchestration::orchestrator_for(conn, &project_path, request.task_id)?.is_some();
+    if (consultant || coordinator) && request.role != AgentRole::Planner {
+        return Err(
+            "Feature coordination may only run its read-only Planner role"
+                .to_string()
+                .into(),
+        );
+    }
     let task = crate::task_store::get(conn, &project_path, request.task_id)?
         .ok_or_else(|| format!("No task {} in this project", request.task_id))?;
 
@@ -235,12 +246,16 @@ pub(crate) fn begin(
 
     // Only a fixed limit defers; Auto at its limit starts anyway, as the app's `Warn` does. A
     // limit that cannot be read starts too: the claim below is what decides.
-    let feature_task =
-        crate::orchestration::feature_for_task(conn, &project_path, task.id)?.is_some();
+    let feature_task = crate::orchestration::feature_for_task(conn, &project_path, task.id)?
+        .is_some()
+        || coordinator;
     if request.respect_capacity || feature_task {
         if let Ok(status) = crate::pipeline_settings::capacity_status(conn) {
             let full = used_slots >= status.slots.max(0) as usize;
             if full && status.settings.concurrency_mode == ConcurrencyMode::Hard {
+                if consultant || coordinator {
+                    return Ok(Begun::Deferred);
+                }
                 let ask = ServerRequest::RequestTaskExecution(RequestTaskExecutionRequest {
                     project_path: project_path.clone(),
                     task_id: task.id,

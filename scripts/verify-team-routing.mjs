@@ -6,6 +6,7 @@ import { shutdownDaemon } from "./custom-desktop.mjs";
 
 // Opt-in real-provider test D. Own project, daemon and session; never uses the prepared feature.
 const directory = mkdtempSync(join(tmpdir(), "maestro-team-routing-"));
+const chatMode = process.argv.includes("--chat");
 const project = join(directory, "project").replaceAll("\\", "/");
 mkdirSync(project);
 const git = (...args) => execFileSync("git", ["-C", project, ...args], { windowsHide: true });
@@ -34,8 +35,9 @@ writeFileSync(
         name: "Selected Cursor",
         role: "Coder",
         agent_id: "cursor",
-        role_prompt:
-          "Connectivity test only. Never use tools. Reply MAESTRO_TEAM_ROUTING_OK and end the turn.",
+        role_prompt: chatMode
+          ? "Bounded communication test. Initially reply MAESTRO_TEAM_ROUTING_OK and end the turn. On a follow-up use only Maestro coordination MCP tools to acknowledge messages and send the requested answer. Do not access files, terminals, network or Git."
+          : "Connectivity test only. Never use tools. Reply MAESTRO_TEAM_ROUTING_OK and end the turn.",
       },
       { id: "lead", name: "Lead", role: "Planner", agent_id: "codex-acp" },
     ],
@@ -117,7 +119,7 @@ const operation = (operation) =>
 let session;
 let feature;
 try {
-  await request({ handshake: { protocol_version: 15 } }, "handshake_ok");
+  await request({ handshake: { protocol_version: 16 } }, "handshake_ok");
   for (const [profile, worker, orchestrator] of [
     ["selected", true, false],
     ["lead", false, true],
@@ -222,6 +224,61 @@ try {
   writeFileSync(join(directory, "result.json"), JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));
   if (!result.expected_reply) throw new Error("Provider did not send expected reply");
+  if (chatMode) {
+    const worker = feature.task_ids[0];
+    const workerQuestion =
+      "Use only Maestro coordination MCP tools, no filesystem or terminal. Acknowledge this message, then send_feature_message to the orchestrator with kind answer, body MAESTRO_TEAM_CHAT_REPLY, dedupe_key real-worker-answer. End your turn.";
+    await operation({
+      action: "message",
+      feature_id: feature.id,
+      recipient_task: null,
+      kind: "question",
+      body: `This is a bounded real communication test. No repository analysis or plan changes. Get the stored feature context, acknowledge this user message, and send_feature_message to task ${worker} with kind question, dedupe_key real-orchestrator-question, and this exact body: ${workerQuestion} Then wait for the answer. When MAESTRO_TEAM_CHAT_REPLY arrives, acknowledge it and reply to the user MAESTRO_TEAM_CHAT_COMPLETE. Do not contact any other agent.`,
+      dedupe_key: "real-user-question",
+    });
+    const leadPush = await next(
+      (m) => m.task_session_started?.task_id === feature.orchestrator_task || m.error,
+    );
+    if (leadPush.error) throw new Error(leadPush.error.message);
+    const lead = leadPush.task_session_started;
+    let completed = false;
+    let sameSession = false;
+    const deadline = Date.now() + 120_000;
+    let snapshot;
+    while (Date.now() < deadline && !completed) {
+      const event = await next(
+        (m) => m.tasks_changed || m.turn_ended || m.error || m.permission_request,
+        Math.max(1, deadline - Date.now()),
+      );
+      if (event.error || event.permission_request) throw new Error(JSON.stringify(event));
+      if (event.turn_ended?.session_id === session) sameSession = true;
+      snapshot = await operation({ action: "snapshot" });
+      completed = snapshot.messages.some(
+        (m) =>
+          m.sender_task === feature.orchestrator_task &&
+          m.body.includes("MAESTRO_TEAM_CHAT_COMPLETE") &&
+          m.state === "Recorded",
+      );
+    }
+    const genuineAnswer = snapshot?.messages.find(
+      (m) =>
+        m.sender_task === worker && m.kind === "answer" && m.body === "MAESTRO_TEAM_CHAT_REPLY",
+    );
+    if (!completed || !genuineAnswer || !sameSession)
+      throw new Error("Bounded real chat did not complete in the same worker session");
+    const chatResult = {
+      directory,
+      feature_id: feature.id,
+      orchestrator_session: lead.session_id,
+      worker_session: session,
+      same_worker_session: true,
+      worker_answer_message: genuineAnswer.id,
+      completed: true,
+      providers: ["codex-acp", "cursor"],
+    };
+    writeFileSync(join(directory, "chat-result.json"), JSON.stringify(chatResult, null, 2));
+    console.log(JSON.stringify(chatResult, null, 2));
+  }
 } catch (error) {
   console.log(JSON.stringify({ directory, error: error.message }, null, 2));
   process.exitCode = 1;

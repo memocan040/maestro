@@ -28,8 +28,8 @@ async function fixture(t, answer, expectedRequest = { home_summary: { project_pa
         const request = JSON.parse(buffer.subarray(4, size + 4)).request;
         buffer = buffer.subarray(size + 4);
         if (request.handshake) {
-          assert.equal(request.handshake.protocol_version, 15);
-          const response = frame({ handshake_ok: { protocol_version: 15 } });
+          assert.equal(request.handshake.protocol_version, 16);
+          const response = frame({ handshake_ok: { protocol_version: 16 } });
           socket.write(response.subarray(0, 2));
           setTimeout(() => socket.write(response.subarray(2)), 5);
         } else {
@@ -41,7 +41,7 @@ async function fixture(t, answer, expectedRequest = { home_summary: { project_pa
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise((resolve) => server.close(resolve)));
-  return { port: server.address().port, token: "test-secret", protocol_version: 15 };
+  return { port: server.address().port, token: "test-secret", protocol_version: 16 };
 }
 
 test("authenticated little-endian framing accepts fragmented replies and ignores pushes", async (t) => {
@@ -79,6 +79,8 @@ test("oversized replies are rejected before buffering their bodies", async (t) =
 
 test("continuous pushes cannot extend the absolute request deadline", async (t) => {
   const runtime = await fixture(t, (socket) => {
+    // Windows can reset the fixture socket when the client enforces its deadline.
+    socket.on("error", (error) => assert.equal(error.code, "ECONNRESET"));
     const timer = setInterval(() => socket.write(frame({ orchestration_changed: {} })), 10);
     socket.once("close", () => clearInterval(timer));
   });

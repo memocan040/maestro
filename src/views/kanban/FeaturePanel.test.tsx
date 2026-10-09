@@ -52,7 +52,14 @@ function openFeature() {
 describe("FeaturePanel approval boundaries", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    state.data = { members: [], features: [{ ...feature }], messages: [] };
+    state.data = {
+      members: [],
+      features: [{ ...feature }],
+      messages: [],
+      discussions: [],
+      chat_settings: { max_consultants: 2, max_rounds: 2 },
+      task_members: {},
+    };
   });
   it("displays the proposed plan without starting workers until the user approves", () => {
     openFeature();

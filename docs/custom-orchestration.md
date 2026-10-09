@@ -231,3 +231,79 @@ Daemon, automatische Zuordnung, sichere Entfernung und gemischte Worker/Reviewer
 `node scripts/verify-team-routing.mjs` ist ein ausdrücklich auszuführender echter
 Provider-Test in einem eigenen temporären Projekt und Daemon. Er berührt niemals
 das vorbereitete Drei-Task-Feature und integriert oder pusht keine Ergebnisse.
+
+## Team Chat (Protokoll 16, Daemon-Migrationen 12–13)
+
+**Features / New Feature → Feature → Team Chat** zeigt die vorhandenen persistenten
+Feature-Nachrichten. **Activity** ist die Standardansicht und startet beim Öffnen,
+Filtern oder Aktualisieren keine Agents. **Discussion** blendet reine Fortschritts-
+und Notizmeldungen aus. **Chat with Orchestrator** öffnet diese Ansicht; erst eine
+bewusst gesendete fachliche Nachricht löst eine Bearbeitung aus. Der gespeicherte
+Feature-/Task-Status und Links zur bestehenden Task-, Session-, Review- und Diff-Ansicht
+stehen daneben. Angezeigt werden explizite Agent-Nachrichten und sichtbare abschließende
+Antworten, keine internen Gedankengänge oder Roh-Tool-Logs.
+
+Eine erste fachliche Nachricht startet den Orchestrator über die bestehende Planner-
+Pipeline mit Chat-Kontext, auch ohne vorherigen Plan-Start. Dabei wird kein Plan-Artefakt
+verlangt. Ein ausdrücklich gestarteter Plan-Turn behält dagegen sein Artefakt-Gate.
+Bestehende aktive Sessions werden für weitere Nachrichten wiederverwendet.
+
+Der Empfänger ist standardmäßig der Orchestrator. **Team via orchestrator** adressiert
+ebenfalls nur diese Session. Ein Teammitglied mit bestehender Feature-Task kann direkt
+adressiert werden; ohne passende Task ist zunächst eine gezielte Konsultation nötig.
+**Reply to sender** bindet eine Antwort an dieselbe Task. Beschäftigte oder fehlende
+Sessions behalten Nachrichten als `Pending`; ein laufender Turn erhält keinen parallelen
+Prompt. `Submitted` bedeutet, dass eine Übergabe bereits versucht wurde, aber deren
+fachliche Verarbeitung unbestätigt ist. Der sichtbare **Retry** ist eine ausdrückliche
+Benutzerentscheidung, keine automatische kostenpflichtige Wiederholung. `Acknowledged`
+bestätigt die Verarbeitung. Notizen, Entscheidungen und Systemereignisse sind `Recorded`
+und lösen für sich keinen Turn aus. Ein unverändertes Duplikat desselben Absenders und
+Empfängers wird auch mit neuem Idempotenzschlüssel nicht nochmals zugestellt.
+
+**Start discussion** verlangt eine konkrete Frage und ausgewählte aktivierte Mitglieder.
+Standard sind zwei zusätzliche Agents und zwei Runden; nur der Benutzer darf die
+projektbezogenen Grenzen zwischen eins und vier konfigurieren. Konsultationen verwenden
+die vorhandene Planner-Strecke mit deren Berechtigungsauflösung und eigenen Sessions.
+Sie erzeugen keine Implementierungs-Child-Tasks, verändern keinen freigegebenen Plan
+und integrieren keine Commits. Feature-, Mitglieds- und Maschinenkapazität bleiben
+Startbedingungen. Ergebnisse gehen einmal pro Runde als tatsächliche Antwort an den
+Orchestrator. Die nächste Runde verwendet die bestehende Session, wenn sie verfügbar ist.
+Der Orchestrator oder Benutzer kann frühzeitig schließen und eine Entscheidung speichern.
+Nach ausgeschöpften Runden ist eine Benutzerentscheidung erforderlich. Eine weitere
+Orchestrator-Besprechung darf das Budget derselben Benutzeranfrage nicht zurücksetzen;
+verschachtelte Delegationen durch Worker sind nicht erlaubt.
+
+Migration 12 ergänzt ausschließlich die bestehende `projects.db`: Absendermetadaten,
+projektbezogene Grenzen, Besprechungen und Konsultationszuordnungen. Sie schreibt alte
+Migrationen nicht um. Migration 13 speichert den einmaligen Chat-Start und unterscheidet
+Chat-Turns von expliziten Plan-Turns, einschließlich unklarem Provider-Ausgang.
+Die bisherigen Feature-Nachrichten bleiben lesbar. Wichtige
+Entscheidungen werden in spätere Worker-Prompts kompakt übernommen: höchstens fünf
+Entscheidungen mit jeweils 1024 Zeichen. MCP-Kontext umfasst die eigene Feature und
+höchstens zwanzig relevante Nachrichten; Worker sehen ihre eigene Kommunikation,
+der Orchestrator die Feature-Kommunikation. Identität kommt weiterhin aus der
+authentifizierten Task-Session. Neue MCP-Tools sind `start_feature_discussion`,
+`advance_feature_discussion` und `close_feature_discussion`; Senden und Bestätigen nutzen
+die vorhandenen Tools. Normale Chatnachrichten ersetzen niemals Planfreigabe,
+Worker-Startbedingungen, menschliche Integrationsfreigabe oder Merge-Freigabe.
+
+Aktualisierung erfolgt über bestehende Daemon-Pushes und Query-Invalidierung.
+Snapshots und `get_feature_context` erzeugen keine Änderungsereignisse und keine
+Orchestrierungs-Wakeup-Schleife. App-Verbindungswechsel und Daemon-Neustart erhalten
+Nachrichten, abgeschlossene Antworten und Besprechungsgrenzen. Unklare Starts erscheinen
+als `AwaitingUser`; abgeschlossene kostenpflichtige Arbeit wird nicht blind wiederholt.
+Eine vollständig neue Ersatzsession für einen nicht reloadfähigen Provider wird nicht
+automatisch erzeugt. In solchen Fällen bleibt die Nachricht sichtbar pending und eine
+gezielte manuelle Wiederaufnahme ist nötig. Es werden keine Token-/Kostenschätzungen
+erfunden.
+
+Reproduzierbarer Nachweis: `cargo test -p maestro-server -p maestro-protocol` umfasst
+zwei echte Fake-ACP-Prozesse, ausschließliche Zustellung an ausgewählte Mitglieder,
+Besprechungsgrenzen, Busy-/Offline-Pufferung, Deduplizierung, sichere Retry-Zustände,
+App-Reattach und tatsächlichen Daemon-Neustart. `TeamChat.test.tsx` prüft die Oberfläche
+ohne Provider-Aufrufe. Der Windows-GUI-Test legt neun Mitglieder an und erhält eine
+Chatnotiz nach App-Neustart. Der opt-in Test
+`node scripts/verify-team-routing.mjs --chat` verwendet dagegen echte authentifizierte
+Codex-/Cursor-Aufrufe: Benutzer → Orchestrator → bestehende Cursor-Session → Antwort →
+Orchestrator. Dafür werden ausschließlich ein eigenes temporäres Projekt und ein eigener
+Daemon verwendet. Der vorbereitete Drei-Task-Abnahmeplan bleibt unangetastet.

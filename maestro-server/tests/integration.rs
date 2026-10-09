@@ -887,9 +887,18 @@ impl Daemon {
 
     /// One window: an `attach` relay, handshaken.
     fn attach(&self) -> std::process::Child {
-        let mut child = Command::new(server_binary())
+        self.attach_with_home(None)
+    }
+
+    fn attach_with_home(&self, home: Option<&std::path::Path>) -> std::process::Child {
+        let mut command = Command::new(server_binary());
+        command
             .arg("attach")
-            .env(maestro_protocol::DAEMON_DIR_ENV, self.dir.path())
+            .env(maestro_protocol::DAEMON_DIR_ENV, self.dir.path());
+        if let Some(home) = home {
+            command.env("HOME", home).env("USERPROFILE", home);
+        }
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -903,8 +912,226 @@ impl Daemon {
     }
 }
 
-impl Drop for Daemon {
-    fn drop(&mut self) {
+#[test]
+fn orchestration_snapshot_does_not_emit_a_change_event() {
+    let daemon = Daemon::new();
+    let project = tempfile::tempdir().unwrap();
+    let mut child = daemon.attach();
+    write_msg_with_id(
+        child.stdin.as_mut().unwrap(),
+        Some(71),
+        ServerRequest::Orchestration(maestro_protocol::OrchestrationRequest {
+            project_path: project.path().to_string_lossy().into_owned(),
+            operation: serde_json::json!({"action":"snapshot"}),
+        }),
+    );
+    let (id, response) = read_msg_with_id(child.stdout.as_mut().unwrap());
+    assert_eq!(
+        id,
+        Some(71),
+        "A read must not invalidate its own query: {response:?}"
+    );
+    assert!(matches!(response, ServerResponse::OrchestrationOk(_)));
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[test]
+fn two_fake_acp_consultants_answer_without_starting_unrelated_members() {
+    use serde_json::json;
+    let home = tempfile::tempdir().unwrap();
+    let daemon = Daemon::new();
+    let path = home.path().to_string_lossy().replace('\\', "/");
+    let node = which::which("node").unwrap();
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/acp-agent.mjs");
+    let platform = if cfg!(windows) {
+        "windows-x86_64"
+    } else if cfg!(target_os = "macos") {
+        if cfg!(target_arch = "aarch64") {
+            "darwin-aarch64"
+        } else {
+            "darwin-x86_64"
+        }
+    } else {
+        "linux-x86_64"
+    };
+    std::fs::create_dir(home.path().join(".maestro-custom")).unwrap();
+    std::fs::write(home.path().join(".maestro-custom/custom-agents.json"),json!({"agents":[{"id":"chat-fixture","name":"Fake ACP chat","distribution":{"binary":{(platform):{"cmd":node,"args":[fixture]}}}}]}).to_string()).unwrap();
+    assert!(Command::new("git")
+        .args(["init", "-b", "main", &path])
+        .output()
+        .unwrap()
+        .status
+        .success());
+    assert!(Command::new("git")
+        .args([
+            "-C",
+            &path,
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "Fixture"
+        ])
+        .output()
+        .unwrap()
+        .status
+        .success());
+    std::fs::create_dir(home.path().join(".maestro")).unwrap();
+    let profiles=["lead","a","b","unrelated"].map(|id|json!({"id":id,"name":id,"role":if id=="lead"{"Planner"}else{"Coder"},"agent_id":"chat-fixture"}));
+    std::fs::write(
+        home.path().join(".maestro/profiles.json"),
+        json!({"profiles":profiles}).to_string(),
+    )
+    .unwrap();
+    let mut child = daemon.attach_with_home(Some(home.path()));
+    let mut id = 0;
+    let rpc = |child: &mut std::process::Child, id: u64, op: serde_json::Value| {
+        write_msg_with_id(
+            child.stdin.as_mut().unwrap(),
+            Some(id),
+            ServerRequest::Orchestration(maestro_protocol::OrchestrationRequest {
+                project_path: path.clone(),
+                operation: op,
+            }),
+        );
+        loop {
+            let (reply, response) = read_msg_with_id(child.stdout.as_mut().unwrap());
+            if reply == Some(id) {
+                let ServerResponse::OrchestrationOk(value) = response else {
+                    panic!("{response:?}")
+                };
+                return value;
+            }
+        }
+    };
+    for member in ["lead", "a", "b", "unrelated"] {
+        id += 1;
+        rpc(
+            &mut child,
+            id,
+            json!({"action":"save_member","member":{"id":member,"profile_id":member,"name":member,"strengths":"","enabled":true,"orchestrator":member=="lead","worker":member!="lead","reviewer":false,"max_sessions":2,"priority":0}}),
+        );
+    }
+    id += 1;
+    let snap = rpc(
+        &mut child,
+        id,
+        json!({"action":"create_feature","title":"Fake chat","goal":"Bounded architecture question","acceptance":["Answers"],"orchestrator_member":"lead","allowed_members":["a","b","unrelated"],"max_parallel":2,"base_branch":"main"}),
+    );
+    let feature = snap["features"][0]["id"].as_str().unwrap();
+    id += 1;
+    let snap = rpc(
+        &mut child,
+        id,
+        json!({"action":"start_discussion","feature_id":feature,"goal":"Choose one API","member_ids":["a","b"],"dedupe_key":"fake-discussion"}),
+    );
+    let tasks = snap["discussions"][0]["task_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_i64().unwrap() as i32)
+        .collect::<Vec<_>>();
+    let mut replies = 0;
+    loop {
+        let response = read_msg(child.stdout.as_mut().unwrap());
+        match response {
+            ServerResponse::TurnEnded(ended) => {
+                assert_eq!(ended.stop_reason, "end_turn");
+                replies += 1;
+            }
+            ServerResponse::TaskSessionStarted(started) => {
+                assert!(tasks.contains(&started.task_id));
+                assert_eq!(started.agent_id, "chat-fixture");
+            }
+            ServerResponse::TasksChanged(_) => {
+                if replies >= 2 {
+                    break;
+                }
+            }
+            ServerResponse::Error(error) => panic!("Fake consultation failed: {}", error.message),
+            _ => {}
+        }
+    }
+    id += 1;
+    let snap = rpc(&mut child, id, json!({"action":"snapshot"}));
+    assert_eq!(snap["discussions"][0]["state"], "AwaitingDecision");
+    assert_eq!(
+        snap["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| m["body"] == "MAESTRO_CUSTOM_ACP_OK")
+            .count(),
+        2
+    );
+    assert!(snap["features"][0]["task_ids"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert_eq!(snap["features"][0]["status"], "Planning");
+    let _ = child.kill();
+    let _ = child.wait();
+    let mut next = daemon.attach_with_home(Some(home.path()));
+    id += 1;
+    let restored = rpc(&mut next, id, json!({"action":"snapshot"}));
+    assert_eq!(restored["messages"], snap["messages"]);
+    assert_eq!(restored["discussions"], snap["discussions"]);
+    let _ = next.kill();
+    let _ = next.wait();
+    daemon.shutdown();
+    let mut restarted = daemon.attach_with_home(Some(home.path()));
+    id += 1;
+    let recovered = rpc(&mut restarted, id, json!({"action":"snapshot"}));
+    assert_eq!(recovered["messages"], snap["messages"]);
+    assert_eq!(recovered["discussions"], snap["discussions"]);
+    let orchestrator = recovered["features"][0]["orchestrator_task"]
+        .as_i64()
+        .unwrap();
+    id += 1;
+    rpc(
+        &mut restarted,
+        id,
+        json!({"action":"message","feature_id":feature,"recipient_task":null,"kind":"question","body":"Report the stored feature status","dedupe_key":"first-chat"}),
+    );
+    loop {
+        match read_msg(restarted.stdout.as_mut().unwrap()) {
+            ServerResponse::TaskSessionStarted(started) => {
+                assert_eq!(started.task_id as i64, orchestrator)
+            }
+            ServerResponse::TurnEnded(_) => {}
+            ServerResponse::TasksChanged(_) => {
+                id += 1;
+                let state = rpc(&mut restarted, id, json!({"action":"snapshot"}));
+                if state["messages"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|m| m["sender_task"] == orchestrator && m["kind"] == "answer")
+                {
+                    assert_eq!(state["features"][0]["status"], "Planning");
+                    assert!(state["features"][0]["task_ids"]
+                        .as_array()
+                        .unwrap()
+                        .is_empty());
+                    break;
+                }
+            }
+            ServerResponse::Error(error) => panic!("First chat failed: {}", error.message),
+            _ => {}
+        }
+    }
+    let _ = restarted.kill();
+    let _ = restarted.wait();
+}
+
+impl Daemon {
+    fn shutdown(&self) {
         let Ok(body) = std::fs::read(self.dir.path().join("runtime.json")) else {
             return;
         };
@@ -916,6 +1143,12 @@ impl Drop for Daemon {
         }
         // The lock is released on exit, which is what lets the directory go.
         std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+}
+
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        self.shutdown();
     }
 }
 

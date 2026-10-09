@@ -413,7 +413,10 @@ mod tests {
                 "get_feature_context",
                 "submit_feature_plan",
                 "send_feature_message",
-                "acknowledge_feature_message"
+                "acknowledge_feature_message",
+                "start_feature_discussion",
+                "advance_feature_discussion",
+                "close_feature_discussion"
             ]
         );
         for tool in tools {

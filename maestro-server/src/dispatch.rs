@@ -1131,6 +1131,7 @@ pub(crate) async fn dispatch_message(
         }
 
         ServerRequest::Orchestration(req) => {
+            let read_only = req.operation["action"] == "snapshot";
             let Some(store) = project_store.cloned() else {
                 send_or_return!(
                     send_response(
@@ -1147,13 +1148,15 @@ pub(crate) async fn dispatch_message(
                 let response =
                     match crate::orchestration::request(&store, &path, req.operation, None).await {
                         Ok(value) => {
-                            crate::helpers::broadcast(
-                                &out,
-                                ServerResponse::TasksChanged(maestro_protocol::ProjectRef {
-                                    project_path: path,
-                                }),
-                            )
-                            .await;
+                            if !read_only {
+                                crate::helpers::broadcast(
+                                    &out,
+                                    ServerResponse::TasksChanged(maestro_protocol::ProjectRef {
+                                        project_path: path,
+                                    }),
+                                )
+                                .await;
+                            }
                             ServerResponse::OrchestrationOk(value)
                         }
                         Err(e) => error_response(e),

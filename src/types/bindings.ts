@@ -3639,7 +3639,8 @@ export type FallbackBehaviour =
  */
 "Fail"
 export type Feature = { id: string; title: string; goal: string; acceptance: string[]; orchestrator_member: string; orchestrator_task: number; allowed_members: string[]; max_parallel: number; base_branch: string; integration_branch: string; status: string; plan: PlannedTask[]; task_ids: number[]; created_at: string }
-export type FeatureMessage = { id: string; feature_id: string; sender_task: number | null; recipient_task: number; kind: string; body: string; state: string; created_at: string }
+export type FeatureDiscussion = { id: string; feature_id: string; goal: string; member_ids: string[]; task_ids: number[]; round: number; max_rounds: number; state: string; summary: string; created_at: string; source_message?: string | null }
+export type FeatureMessage = { id: string; feature_id: string; sender_task: number | null; recipient_task: number; kind: string; body: string; state: string; created_at: string; sender_name: string | null; sender_agent: string | null; sender_role: string | null }
 export type FileEntry = { name: string; is_dir: boolean }
 export type FileTransferResult = { transfer_id: string; bytes_transferred: number }
 /**
@@ -3846,7 +3847,7 @@ export type OpenedPullRequest = { number: number; url: string;
  * [`CreatedPullRequest::head_sha`].
  */
 head_sha: string | null }
-export type OrchestrationSnapshot = { members: TeamMember[]; features: Feature[]; messages: FeatureMessage[] }
+export type OrchestrationSnapshot = { members: TeamMember[]; features: Feature[]; messages: FeatureMessage[]; discussions?: FeatureDiscussion[]; chat_settings?: TeamChatSettings; task_members?: Partial<{ [key in number]: string }> }
 /**
  * How the current phase is going.
  * 
@@ -4307,6 +4308,7 @@ export type TaskPhase = "Spawning" | "Refining" | "Drafting" | "PlanReview" | "I
 export type TaskPriority = "Urgent" | "High" | "Medium" | "Low" | "None"
 export type TaskRelationship = { id: number; from_task_id: number; to_task_id: number; relationship_type: string; created_at: string }
 export type TaskStatus = "Planning" | "Queue" | "InProgress" | "Review" | "Done" | "Cancelled"
+export type TeamChatSettings = { max_consultants: number; max_rounds: number }
 export type TeamMember = { id: string; profile_id: string; name: string; strengths: string; enabled: boolean; orchestrator: boolean; planner?: boolean; refiner?: boolean; worker: boolean; reviewer: boolean; max_sessions: number; priority: number }
 export type TeamProvider = { id: string; name: string; installed: boolean }
 export type Template = { id: number; name: string; 

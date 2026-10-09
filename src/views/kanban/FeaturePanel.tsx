@@ -10,6 +10,7 @@ import {
 } from "@/services/orchestration.service";
 import { useTasksQuery } from "@/services/task.service";
 import { useNavigationActions } from "@/store/navigationStore";
+import { TeamChat } from "./TeamChat";
 
 export function FeaturePanel({ projectId }: { projectId: number }) {
   const query = useOrchestration(projectId);
@@ -25,7 +26,6 @@ export function FeaturePanel({ projectId }: { projectId: number }) {
   const [orchestrator, setOrchestrator] = useState("");
   const [parallel, setParallel] = useState(2);
   const [baseBranch, setBaseBranch] = useState("main");
-  const [message, setMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
   const run = (operation: Record<string, unknown>) => {
     setError(null);
@@ -38,7 +38,7 @@ export function FeaturePanel({ projectId }: { projectId: number }) {
         Features / New Feature
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-4xl max-h-[85vh] overflow-y-auto">
           <DialogTitle>Project orchestration</DialogTitle>
           {(error || query.error || start.error) && (
             <p role="alert" className="text-destructive">
@@ -75,7 +75,7 @@ export function FeaturePanel({ projectId }: { projectId: number }) {
                     orchestrator_member: orchestrator,
                     allowed_members:
                       query.data?.members
-                        .filter((m) => m.enabled && (m.worker || m.reviewer))
+                        .filter((m) => m.enabled && m.id !== orchestrator)
                         .map((m) => m.id) ?? [],
                     max_parallel: parallel,
                     base_branch: baseBranch,
@@ -286,55 +286,16 @@ export function FeaturePanel({ projectId }: { projectId: number }) {
                   </Button>
                 );
               })}
-              <div className="space-y-2">
-                {query.data?.messages
-                  .filter((m) => m.feature_id === feature.id)
-                  .map((m) => (
-                    <div key={m.id} className="rounded border p-2 text-sm">
-                      <span className="text-muted-foreground">
-                        {m.sender_task === null ? "You" : `Task #${m.sender_task}`} → #
-                        {m.recipient_task} · {m.kind} · {m.state}
-                      </span>
-                      <p className="whitespace-pre-wrap">{m.body}</p>
-                      {m.state === "Submitted" && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={change.isPending}
-                          onClick={() => run({ action: "retry_message", message_id: m.id })}
-                        >
-                          Retry delivery (may repeat provider work)
-                        </Button>
-                      )}
-                    </div>
-                  ))}
-              </div>
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  run({
-                    action: "message",
-                    feature_id: feature.id,
-                    recipient_task: null,
-                    kind: "instruction",
-                    body: message,
-                    dedupe_key: crypto.randomUUID(),
-                  });
-                  setMessage("");
-                }}
-                className="space-y-2"
-              >
-                <Textarea
-                  aria-label="Message to orchestrator"
-                  required
-                  placeholder="Decision or concrete follow-up for the orchestrator"
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
+              {query.data && (
+                <TeamChat
+                  key={feature.id}
+                  projectId={projectId}
+                  feature={feature}
+                  snapshot={query.data}
+                  tasks={tasks.data ?? []}
+                  openTask={navigation.setActiveTaskId}
                 />
-                <Button type="submit" disabled={change.isPending || !message.trim()}>
-                  Send to orchestrator
-                </Button>
-              </form>
+              )}
             </div>
           )}
         </DialogContent>

@@ -100,6 +100,55 @@ pub enum OrchestrationOperation {
     RetryMessage {
         message_id: String,
     },
+    ChatSettings {
+        max_consultants: usize,
+        max_rounds: usize,
+    },
+    StartDiscussion {
+        feature_id: String,
+        goal: String,
+        member_ids: Vec<String>,
+        dedupe_key: String,
+    },
+    AdvanceDiscussion {
+        discussion_id: String,
+        question: String,
+    },
+    CloseDiscussion {
+        discussion_id: String,
+        summary: String,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(specta::Type))]
+pub struct FeatureDiscussion {
+    pub id: String,
+    pub feature_id: String,
+    pub goal: String,
+    pub member_ids: Vec<String>,
+    pub task_ids: Vec<i32>,
+    pub round: usize,
+    pub max_rounds: usize,
+    pub state: String,
+    pub summary: String,
+    pub created_at: String,
+    #[serde(default)]
+    pub source_message: Option<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "bindings", derive(specta::Type))]
+pub struct TeamChatSettings {
+    pub max_consultants: usize,
+    pub max_rounds: usize,
+}
+impl Default for TeamChatSettings {
+    fn default() -> Self {
+        Self {
+            max_consultants: 2,
+            max_rounds: 2,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -113,6 +162,9 @@ pub struct FeatureMessage {
     pub body: String,
     pub state: String,
     pub created_at: String,
+    pub sender_name: Option<String>,
+    pub sender_agent: Option<String>,
+    pub sender_role: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "bindings", derive(specta::Type))]
@@ -120,4 +172,10 @@ pub struct OrchestrationSnapshot {
     pub members: Vec<TeamMember>,
     pub features: Vec<Feature>,
     pub messages: Vec<FeatureMessage>,
+    #[serde(default)]
+    pub discussions: Vec<FeatureDiscussion>,
+    #[serde(default)]
+    pub chat_settings: TeamChatSettings,
+    #[serde(default)]
+    pub task_members: std::collections::BTreeMap<i32, String>,
 }

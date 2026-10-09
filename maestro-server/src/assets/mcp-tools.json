@@ -700,7 +700,10 @@
               "blocked",
               "review_ready",
               "review_feedback",
-              "instruction"
+              "instruction",
+              "decision",
+              "note",
+              "team_instruction"
             ]
           },
           "body": {
@@ -725,6 +728,66 @@
           }
         },
         "required": ["message_id"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "start_feature_discussion",
+      "description": "Only the feature orchestrator may start a targeted read-only consultation with allowed team members. Give a concrete goal; defaults allow two additional agents, two rounds, no nested discussions. Results return to this orchestrator. Never use this for ordinary progress or display updates.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "feature_id": {
+            "type": "string"
+          },
+          "goal": {
+            "type": "string"
+          },
+          "member_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "dedupe_key": {
+            "type": "string"
+          }
+        },
+        "required": ["feature_id", "goal", "member_ids", "dedupe_key"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "advance_feature_discussion",
+      "description": "Only the orchestrator may ask a specific second-round follow-up after all current answers. Reuses existing consultant sessions. Server enforces the persisted round limit. If exhausted, close with a decision or escalate to the user.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "discussion_id": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          }
+        },
+        "required": ["discussion_id", "question"],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "close_feature_discussion",
+      "description": "End a discussion early with a concise recorded decision or user escalation. This never approves a plan, worker result, integration or merge.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "discussion_id": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": ["discussion_id", "summary"],
         "additionalProperties": false
       }
     }

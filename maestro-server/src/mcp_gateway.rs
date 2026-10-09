@@ -181,6 +181,9 @@ pub(crate) async fn handle_host_tool_call(
         "submit_feature_plan",
         "send_feature_message",
         "acknowledge_feature_message",
+        "start_feature_discussion",
+        "advance_feature_discussion",
+        "close_feature_discussion",
     ]
     .contains(&call.name.as_str())
     {
@@ -206,14 +209,19 @@ pub(crate) async fn handle_host_tool_call(
                     "get_feature_context" => "snapshot",
                     "submit_feature_plan" => "submit_plan",
                     "send_feature_message" => "message",
+                    "start_feature_discussion" => "start_discussion",
+                    "advance_feature_discussion" => "advance_discussion",
+                    "close_feature_discussion" => "close_discussion",
                     _ => "acknowledge",
                 });
                 let value = crate::orchestration::request(&store, &path, args, Some(task)).await?;
-                crate::helpers::broadcast(
-                    &out,
-                    ServerResponse::TasksChanged(ProjectRef { project_path: path }),
-                )
-                .await;
+                if call.name != "get_feature_context" {
+                    crate::helpers::broadcast(
+                        &out,
+                        ServerResponse::TasksChanged(ProjectRef { project_path: path }),
+                    )
+                    .await;
+                }
                 Ok::<_, String>(value)
             }
             .await;
