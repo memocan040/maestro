@@ -94,15 +94,17 @@ function run(command, args, env = buildEnv()) {
   });
 }
 
-export function daemonRequest(runtime, request) {
+export function daemonRequest(runtime, request, responseKey = "home_summary_ok", timeout = 5_000) {
   return new Promise((done, fail) => {
     const socket = createConnection({ host: "127.0.0.1", port: runtime.port });
     let buffer = Buffer.alloc(0);
     let handshaken = false;
     let settled = false;
+    let deadline;
     const finish = (error, result) => {
       if (settled) return;
       settled = true;
+      clearTimeout(deadline);
       socket.destroy();
       if (error) fail(error);
       else done(result);
@@ -113,7 +115,7 @@ export function daemonRequest(runtime, request) {
       size.writeUInt32LE(body.length);
       socket.write(Buffer.concat([size, body]));
     };
-    socket.setTimeout(5_000, () => finish(new Error("Daemon antwortet nicht")));
+    deadline = setTimeout(() => finish(new Error("Daemon antwortet nicht")), timeout);
     socket.once("error", (error) => finish(error));
     socket.once("close", () => {
       if (!settled) finish(new Error("Daemon-Verbindung vor Antwort geschlossen"));
@@ -140,7 +142,12 @@ export function daemonRequest(runtime, request) {
           handshaken = true;
           frame(request);
         }
-        if (message?.home_summary_ok) return finish(null, message.home_summary_ok.status);
+        if (message?.[responseKey]) {
+          return finish(
+            null,
+            responseKey === "home_summary_ok" ? message[responseKey].status : message[responseKey],
+          );
+        }
       }
     });
   });
@@ -167,10 +174,18 @@ export async function shutdownDaemon(dataDir) {
     socket.once("error", () => socket.destroy());
     socket.once("close", done);
   });
-  for (let attempt = 0; existsSync(runtimePath) && attempt < 100; attempt++) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    let alive = true;
+    try {
+      process.kill(runtime.pid, 0);
+    } catch (error) {
+      if (error.code !== "ESRCH") throw error;
+      alive = false;
+    }
+    if (!existsSync(runtimePath) && !alive) return;
     await new Promise((done) => setTimeout(done, 100));
   }
-  if (existsSync(runtimePath)) throw new Error("Daemon nicht beendet. Kein Austausch erfolgt.");
+  throw new Error("Daemon-Prozess nicht nachweislich beendet. Kein Austausch erfolgt.");
 }
 
 async function approveRestart(dataDir) {

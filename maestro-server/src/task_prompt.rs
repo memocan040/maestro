@@ -104,6 +104,9 @@ pub fn compose(
         Some(prompt) => prompt,
         None => format!("{role_prompt}{prompt_text}\n\n---\n{protocol}"),
     }));
+    if let Some(context) = crate::orchestration::worker_context(conn, project_path, task.id)? {
+        blocks.push(text(context));
+    }
 
     let latest = |kind: &str| -> Result<Option<String>, String> {
         Ok(

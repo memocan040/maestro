@@ -751,10 +751,26 @@ pub fn end_turn(
             .replace(crate::turn::COMPLETION_MARKER, "")
             .trim()
             .is_empty();
-    let event = if missing_plan {
+    let feature_review = phase == Some(TaskPhase::SelfReview)
+        && delivered
+        && crate::orchestration::feature_for_task(&tx, project_path, task_id)?.is_some();
+    let feature_verdict = feature_review
+        .then(|| crate::turn::explicit_verdict(&request.closing_message))
+        .flatten();
+    let invalid_review = feature_review && feature_verdict.is_none();
+    let event = if missing_plan || invalid_review {
         TaskTransition::PhaseFailed
     } else if phase == Some(TaskPhase::SelfReview) && delivered {
-        review_verdict_event(&tx, project_path, task_id, request.review_approved)
+        review_verdict_event(
+            &tx,
+            project_path,
+            task_id,
+            if feature_review {
+                feature_verdict == Some(crate::turn::ReviewVerdict::Approved)
+            } else {
+                request.review_approved
+            },
+        )
     } else {
         match request.ending {
             TurnEnding::Completed {
@@ -775,7 +791,7 @@ pub fn end_turn(
     let task = transition::apply(&tx, project_path, task_id, event, &TransitionGuard::Active)?;
     if task.is_some() {
         let phase = phase.map(text);
-        if delivered && !missing_plan {
+        if delivered && !missing_plan && !invalid_review {
             record_outcome(
                 &tx,
                 project_path,

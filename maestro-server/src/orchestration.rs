@@ -168,25 +168,77 @@ pub fn check_start(conn: &Connection, project: &str, task: i32) -> Result<(), St
             return Err(format!("Feature is {}", f.status));
         }
         let active: i64 = conn.query_row("SELECT COUNT(*) FROM feature_tasks f JOIN tasks t ON t.project_path = f.project_path AND t.id = f.task_id
-            WHERE f.project_path = ?1 AND f.feature_id = ?2 AND t.id != ?3 AND t.phase_status = 'Running'", params![project, f.id, task], |r| r.get(0)).map_err(|e| e.to_string())?;
+            WHERE f.project_path = ?1 AND f.feature_id = ?2 AND t.id != ?3 AND t.phase_status IN ('Running', 'Blocked')", params![project, f.id, task], |r| r.get(0)).map_err(|e| e.to_string())?;
         if active >= f.max_parallel as i64 {
             return Err("Feature parallelism limit reached".into());
         }
-        let member_id: String = conn
-            .query_row(
-                "SELECT member_id FROM feature_tasks WHERE project_path = ?1 AND task_id = ?2",
-                params![project, task],
-                |r| r.get(0),
-            )
-            .map_err(|e| e.to_string())?;
-        let m = member(conn, project, &member_id)?;
-        let active: i64 = conn.query_row("SELECT COUNT(*) FROM feature_tasks f JOIN tasks t ON t.project_path = f.project_path AND t.id = f.task_id
-            WHERE f.project_path = ?1 AND f.member_id = ?2 AND t.id != ?3 AND t.phase_status = 'Running'", params![project, member_id, task], |r| r.get(0)).map_err(|e| e.to_string())?;
-        if active >= m.max_sessions as i64 {
+    }
+    if let Some(m) = execution_member(conn, project, task)? {
+        let mut active = 0;
+        for other in crate::task_store::list(conn, project)? {
+            if other.id != task
+                && matches!(
+                    other.phase_status,
+                    Some(
+                        maestro_protocol::PhaseStatus::Running
+                            | maestro_protocol::PhaseStatus::Blocked
+                    )
+                )
+                && execution_member(conn, project, other.id)?
+                    .is_some_and(|other| other.profile_id == m.profile_id)
+            {
+                active += 1;
+            }
+        }
+        if active >= m.max_sessions {
             return Err("Team member session limit reached".into());
         }
     }
     Ok(())
+}
+
+/// A review consumes its selected reviewer's capacity, including while spawning.
+/// The orchestrator also consumes the capacity of its team profile.
+fn execution_member(
+    conn: &Connection,
+    project: &str,
+    task: i32,
+) -> Result<Option<TeamMember>, String> {
+    if let Some(f) = orchestrator_for(conn, project, task)? {
+        return member(conn, project, &f.orchestrator_member).map(Some);
+    }
+    let Some(f) = feature_for_task(conn, project, task)? else {
+        return Ok(None);
+    };
+    let state = crate::task_store::transition::read_state(conn, project, task)?;
+    let phase = if state.phase == Some(maestro_protocol::TaskPhase::Spawning) {
+        state.claimed_from
+    } else {
+        state.phase
+    };
+    if phase == Some(maestro_protocol::TaskPhase::SelfReview) {
+        let task = crate::task_store::get(conn, project, task)?.ok_or("Task not found")?;
+        let profile_id =
+            crate::profiles::profile_id_for(&task, maestro_protocol::AgentRole::Reviewer);
+        return bodies::<TeamMember>(conn, "agent_team", project)?
+            .into_iter()
+            .find(|m| {
+                m.enabled
+                    && m.reviewer
+                    && f.allowed_members.contains(&m.id)
+                    && Some(&m.profile_id) == profile_id.as_ref()
+            })
+            .map(Some)
+            .ok_or_else(|| "Feature has no enabled team reviewer for this stage".into());
+    }
+    let id: String = conn
+        .query_row(
+            "SELECT member_id FROM feature_tasks WHERE project_path = ?1 AND task_id = ?2",
+            params![project, task],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    member(conn, project, &id).map(Some)
 }
 
 fn create_task(
@@ -737,6 +789,20 @@ pub fn prompt(conn: &Connection, project: &str, task: i32) -> Result<Option<Stri
     Ok(Some(format!("You are the persistent project orchestrator for feature {}. Do not implement code. Analyze the project and coordinate its existing tasks. Submit a structured plan through submit_feature_plan with feature_id and tasks (key, title, instructions, acceptance, member_id, depends_on). Human plan approval starts workers. Worker integration always requires human approval. Use send_feature_message to resolve specific worker questions, and acknowledge_feature_message after processing each delivered message. Do not duplicate completed or existing tasks. No polling or recursive discussions. Feature: {}\nTeam: {}",f.id,serde_json::to_string(&f).map_err(|e|e.to_string())?,serde_json::to_string(&team).map_err(|e|e.to_string())?)))
 }
 
+pub fn worker_context(
+    conn: &Connection,
+    project: &str,
+    task: i32,
+) -> Result<Option<String>, String> {
+    let Some(f) = feature_for_task(conn, project, task)? else {
+        return Ok(None);
+    };
+    Ok(Some(format!(
+        "## Feature coordination\nFeature ID: {}\nGoal: {}\nAcceptance: {}\nYour task ID: {}. The orchestrator task is {}. Report progress, questions, blockers and review feedback with send_feature_message (feature_id above, recipient_task omitted, kind, body and a stable dedupe_key). Identity comes from your session; do not impersonate another task. Acknowledge delivered messages with acknowledge_feature_message. For a question or blocker, omit the completion marker and wait for the orchestrator's answer in this same session. Do not poll, delegate tasks, contact other workers, or integrate branches. Human approval is required for every integration.",
+        f.id, f.goal, f.acceptance.join("; "), task, f.orchestrator_task
+    )))
+}
+
 pub async fn pump(
     store: &crate::project_store::Store,
     sessions: &crate::sessions::SessionMap,
@@ -957,6 +1023,171 @@ mod tests {
                 depends_on: if n == 2 { vec!["t0".into()] } else { vec![] },
             })
             .collect()
+    }
+
+    #[test]
+    fn reviewers_and_orchestrators_share_their_profile_capacity_during_spawn() {
+        let (_dir, mut conn, path) = fixture();
+        let mut f = features(&conn, &path).unwrap().remove(0);
+        let mut lead = member(&conn, &path, "lead").unwrap();
+        lead.max_sessions = 1;
+        answer(
+            &mut conn,
+            &path,
+            Operation::SaveMember { member: lead },
+            None,
+        )
+        .unwrap();
+        answer(
+            &mut conn,
+            &path,
+            Operation::SaveMember {
+                member: TeamMember {
+                    id: "reviewer".into(),
+                    profile_id: "planner".into(),
+                    name: "Reviewer".into(),
+                    strengths: String::new(),
+                    enabled: true,
+                    orchestrator: false,
+                    worker: false,
+                    reviewer: true,
+                    max_sessions: 1,
+                    priority: 0,
+                },
+            },
+            None,
+        )
+        .unwrap();
+        f.allowed_members.push("reviewer".into());
+        save_feature(&conn, &path, &f).unwrap();
+        answer(
+            &mut conn,
+            &path,
+            Operation::SubmitPlan {
+                feature_id: f.id.clone(),
+                tasks: plan(),
+            },
+            None,
+        )
+        .unwrap();
+        answer(
+            &mut conn,
+            &path,
+            Operation::ApprovePlan {
+                feature_id: f.id.clone(),
+            },
+            None,
+        )
+        .unwrap();
+        let f = feature(&conn, &path, &f.id).unwrap();
+        conn.execute("UPDATE tasks SET phase='Spawning', claimed_from='SelfReview', phase_status='Running' WHERE project_path=?1 AND id=?2", params![path, f.task_ids[0]]).unwrap();
+        conn.execute("UPDATE tasks SET phase='SelfReview', phase_status='Waiting' WHERE project_path=?1 AND id=?2", params![path, f.task_ids[1]]).unwrap();
+        assert!(check_start(&conn, &path, f.task_ids[1])
+            .unwrap_err()
+            .contains("session limit"));
+        assert!(check_start(&conn, &path, f.orchestrator_task)
+            .unwrap_err()
+            .contains("session limit"));
+        // The reviewer does not consume the coder's member capacity.
+        assert!(check_start(&conn, &path, f.task_ids[2]).is_ok());
+        // SessionReady checks exclude the claim they are validating.
+        assert!(check_start(&conn, &path, f.task_ids[0]).is_ok());
+        conn.execute(
+            "UPDATE tasks SET phase_status='Waiting' WHERE project_path=?1 AND id=?2",
+            params![path, f.task_ids[0]],
+        )
+        .unwrap();
+        assert!(check_start(&conn, &path, f.task_ids[1]).is_ok());
+        assert!(check_start(&conn, &path, f.orchestrator_task).is_ok());
+    }
+
+    #[test]
+    fn workers_receive_feature_identity_and_same_session_question_instructions() {
+        let (_dir, mut conn, path) = fixture();
+        let f = features(&conn, &path).unwrap().remove(0);
+        answer(
+            &mut conn,
+            &path,
+            Operation::SubmitPlan {
+                feature_id: f.id.clone(),
+                tasks: plan(),
+            },
+            None,
+        )
+        .unwrap();
+        answer(
+            &mut conn,
+            &path,
+            Operation::ApprovePlan {
+                feature_id: f.id.clone(),
+            },
+            None,
+        )
+        .unwrap();
+        let f = feature(&conn, &path, &f.id).unwrap();
+        let context = worker_context(&conn, &path, f.task_ids[0])
+            .unwrap()
+            .unwrap();
+        assert!(context.contains(&f.id));
+        assert!(context.contains("send_feature_message"));
+        assert!(context.contains("acknowledge_feature_message"));
+        assert!(context.contains("same session"));
+        assert!(worker_context(&conn, &path, f.orchestrator_task)
+            .unwrap()
+            .is_none());
+        assert!(worker_context(&conn, "/other", f.task_ids[0])
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn an_unreadable_review_cannot_pass_a_feature_task_or_spend_a_rework_round() {
+        let (_dir, mut conn, path) = fixture();
+        let f = features(&conn, &path).unwrap().remove(0);
+        answer(
+            &mut conn,
+            &path,
+            Operation::SubmitPlan {
+                feature_id: f.id.clone(),
+                tasks: plan(),
+            },
+            None,
+        )
+        .unwrap();
+        answer(
+            &mut conn,
+            &path,
+            Operation::ApprovePlan {
+                feature_id: f.id.clone(),
+            },
+            None,
+        )
+        .unwrap();
+        let f = feature(&conn, &path, &f.id).unwrap();
+        let task_id = f.task_ids[0];
+        conn.execute("UPDATE tasks SET phase='SelfReview', phase_status='Running' WHERE project_path=?1 AND id=?2", params![path, task_id]).unwrap();
+        let task = crate::task_store::end_turn(
+            &mut conn,
+            &maestro_protocol::EndTaskTurnRequest {
+                project_path: path.clone(),
+                task_id,
+                ending: maestro_protocol::TurnEnding::ArtifactDelivered,
+                review_approved: true,
+                closing_message: "The provider returned an incomplete reply".into(),
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            task.phase_status,
+            Some(maestro_protocol::PhaseStatus::Failed)
+        );
+        assert_eq!(task.review_rounds, 0);
+        assert!(check_start(&conn, &path, f.task_ids[2]).is_ok());
+        assert_eq!(
+            crate::task_store::dependencies::blockers(&conn, &path, f.task_ids[2]).unwrap(),
+            vec![task_id]
+        );
     }
 
     #[tokio::test]

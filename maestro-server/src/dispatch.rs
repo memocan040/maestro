@@ -250,6 +250,7 @@ pub(crate) async fn cancel_session(
 /// The loop's share of a request answered off it: what the slow part found, and the sink the
 /// answer goes out on. Only what touches state the loop owns comes back here.
 pub(crate) enum Settle {
+    SessionStarted(Box<StartedSession>),
     Detected(
         maestro_protocol::DetectInstalledAgentsResponse,
         crate::ClientOut,
@@ -271,6 +272,13 @@ pub(crate) enum Settle {
     },
 }
 
+pub(crate) struct StartedSession {
+    pub session_id: String,
+    pub session: ActiveSession,
+    pub response: ServerResponse,
+    pub stdout: crate::ClientOut,
+}
+
 pub(crate) type SettleTx = tokio::sync::mpsc::UnboundedSender<Settle>;
 
 /// The loop's settle channel, for code that runs inside an agent connection and is handed none.
@@ -288,6 +296,35 @@ pub(crate) async fn settle(
     pending_host_tools: &mut crate::mcp_gateway::PendingHostTools,
 ) {
     let (stdout, response) = match settle {
+        Settle::SessionStarted(started) => {
+            let StartedSession {
+                session_id,
+                session,
+                response,
+                stdout,
+            } = *started;
+            let registered = crate::register_started_session(
+                session_id.clone(),
+                session,
+                sessions,
+                agent_connections,
+                project_store,
+                automation_store,
+                &stdout,
+            )
+            .await;
+            (
+                stdout,
+                if registered {
+                    response
+                } else {
+                    ServerResponse::Error(ErrorResponse {
+                        message: "Session was closed while starting".into(),
+                        session_id: Some(session_id),
+                    })
+                },
+            )
+        }
         Settle::TaskStarted(started) => {
             crate::task_runner::adopt(
                 *started,
@@ -952,7 +989,7 @@ pub(crate) async fn dispatch_message(
             let requested_at = chrono::Utc::now();
             let stdout_task = Arc::clone(stdout);
             let agent_connections_task = Arc::clone(agent_connections);
-            let spawn_result_tx = spawn_result_tx.clone();
+            let settle_tx = settle_tx.clone();
             // Offload the blocking ACP operations to a separate task so the main loop
             // stays responsive to PermitResponse and other messages.
             tokio::spawn(async move {
@@ -1018,11 +1055,15 @@ pub(crate) async fn dispatch_message(
                             can_reload: result.supports_session_load,
                             requested_at,
                         });
-                if send_response(&stdout_task, &ServerResponse::SpawnOk(response))
-                    .await
-                    .is_ok()
+                if let Err(error) =
+                    settle_tx.send(Settle::SessionStarted(Box::new(StartedSession {
+                        session_id: req.session_id,
+                        session: result.session,
+                        response: ServerResponse::SpawnOk(response),
+                        stdout: stdout_task,
+                    })))
                 {
-                    let _ = spawn_result_tx.send((req.session_id, result.session)).await;
+                    send_diag("warn", format!("[session] registration failed: {error}"));
                 }
             });
         }
@@ -1261,7 +1302,7 @@ pub(crate) async fn dispatch_message(
                 req,
                 agent_connections,
                 agents_with_spawn,
-                spawn_result_tx,
+                settle_tx,
                 stdout,
             )
             .await;

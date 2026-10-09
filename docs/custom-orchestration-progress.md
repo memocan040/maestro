@@ -37,7 +37,7 @@ Tatsächlich bestanden:
 
 Happy-DOM protokolliert weiterhin die bekannten Canvas-/Google-Fonts-Fetch-Abbrüche; Vitest zählt keine fehlgeschlagenen Tests deswegen. Das ist kein Nachweis eines funktionierenden Canvas-Netzwerks.
 
-Reale CLIs liefern Versionen: Claude Code 2.1.293, Codex CLI 0.161.0, Cursor Agent 2026.10.01-e373342. **Keine drei authentifizierten ACP-Harnesses verifiziert; Test A bleibt offen.** Keine Provider-Aufträge mit zusätzlichem Modellverbrauch ausgeführt.
+Reale CLIs liefern Versionen: Claude Code 2.1.293, Codex CLI 0.161.0, Cursor Agent 2026.10.01-e373342. In der Fortsetzung wurden alle drei mit vorhandenen Anmeldungen über echte ACP-Sessions geprüft: Initialize, Spawn, minimaler Prompt, tatsächliche Agent-Antwort und `end_turn`. Das beweist die Connectivity-Voraussetzung von Test A, noch nicht die vollständige Feature-Abnahme. Diese Proben verursachen tatsächliche Provider-Aufrufe.
 
 Windows-GUI-Smoke gegen die echte Debug-App ohne `wdio`: **5 bestanden** (Fenstertitel, Home, lokaler Rechner, IPC/DB, Version). Das erste Release startete wegen einer verbliebenen nativen Updater-Registrierung nicht; Registrierung und Permission sind korrigiert und der GUI-Lauf danach bestand. Der eingebettete Windows-WebDriver scheitert schon beim Kompilieren an inkompatiblen Windows/WebView2-Typen; Windows verwendet deshalb den erfolgreich geprüften externen Tauri-/Edge-Treiber. Der korrigierte Release-Build ohne `wdio` und NSIS-Installer sind bestanden (22,23 MiB). Installation unter `C:\Users\mehme\AppData\Local\MaestroCustomVerification` mit Exit-Code 0; gebündelter Daemon SHA-256 identisch mit Build-Asset, Version `0.35.1-protocol-14`. Installierte App entspricht der Release-Binary bis auf den erwarteten NSIS-Bundle-Marker (`UNK` → `NSS`). Auch gegen die installierte Release-App: **5 GUI-Smoke-Tests bestanden**, Exit-Code 0, Test-Daemon erfolgreich beendet. Screenshot `%TEMP%/maestro-custom-installed-home.png` visuell geprüft. Eine offizielle Maestro-Installation ist auf diesem Rechner nicht vorhanden; tatsächlicher Parallelbetrieb bleibt offen.
 
@@ -99,8 +99,9 @@ gegen Neubauen sperren; die echten Harness-Tests verwenden deshalb eine isoliert
 
 `bun run custom:build` baut nur den Installer; `custom:update` fragt nach erfolgreichem
 Build und SHA-256-Anzeige ausdrücklich vor Installation und Session-Unterbrechung.
-Ein neuer Release-Build läuft in dieser Fortsetzung; sein Ergebnis erst nach erfolgreichem
-Abschluss und GUI-Test als neues verifiziertes Artefakt bezeichnen.
+Der neue Release-Build und NSIS-Bundle sind erfolgreich abgeschlossen; die zusätzliche
+Kapazitätskorrektur wird vor dem abschließenden Bundle erneut geprüft. Der neue Installer
+wurde nicht installiert. Installation erfordert die separate menschliche Bestätigung.
 
 Bestanden in dieser Fortsetzung:
 
@@ -111,20 +112,36 @@ Bestanden in dieser Fortsetzung:
 - Vier Node-Tests für authentifizierte Daemon-Frames, fragmentierte Antworten, Pushes,
   Verbindungsverlust und oversized Frames. Aufruf: `node --test scripts/custom-desktop.test.mjs`.
 - Frontend: 1573 Tests / 157 Dateien. Lint: nur die vier vorher bekannten React-Purity-Warnungen.
-- Daemon nach Worker-Kontext-/Review-Gate-Ergänzungen: 390 Unit-Tests, 62 Protokolltests,
-  16 vorhandene Wire-Integrationstests. Nachfolgende Änderungen separat erneut prüfen.
+- Daemon nach Worker-Kontext-/Review-Gate-/Spawn-/Kapazitäts-Ergänzungen: 391 Unit-Tests,
+  62 Protokolltests und 17 Wire-Integrationstests. Der Wire-Lauf wurde mit einem eigenen
+  Daemon-Verzeichnis pro Test erneut bestanden. Gesamtlauf:
+  `%TEMP%/maestro-custom-final-server-tests.log`.
+- Neue Release-App ohne `wdio`: beide echten Windows-GUI-Dateien bestanden,
+  fünf Smoke-Assertions plus Team-/Feature-/App-Neustart-Test.
+  `%TEMP%/maestro-custom-release-gui-latest.log` (2:31 Minuten).
 
-Erste reale ACP-Probe: Codex und Cursor initialisierten und antworteten mit `end_turn`.
-Claude ist angemeldet, traf aber unmittelbar nach `SpawnOk` auf `unknown session`.
-Die Ursache ist die Antwort vor Registrierung im Dispatch-Loop; Spawn und Reload werden
-auf die vorhandene Settle-Strecke umgestellt. Ein deterministischer Fake-ACP-Wire-Test
-prüft 20 sofortige Spawn-/Prompt- und Reload-/Prompt-Paare. Die zweite reale Probe läuft;
-die Antwortvalidierung zählt ausschließlich Agent-Chunks, niemals die Benutzeranweisung.
+Die erste reale ACP-Probe reproduzierte Claudes `unknown session` unmittelbar nach
+`SpawnOk`. Ursache: Erfolgsantwort vor Registrierung im Dispatch-Loop. Spawn und Reload
+registrieren die Session jetzt über die vorhandene Settle-Strecke vor der Antwort.
+Ein bestandener Fake-ACP-Wire-Test prüft 20 sofortige Spawn-/Prompt- und Reload-/Prompt-Paare.
+Danach bestanden Codex (`codex-acp`), Claude (`claude-acp`) und Cursor (`cursor`) echte
+authentifizierte ACP-Turns. Der abschließende isolierte Lauf ist dokumentiert in
+`%TEMP%/maestro-custom-real-harness-isolated2.log`, Ergebnisse in
+`%TEMP%/maestro-real-harness-kZQBKN/results.json`. Die Antwortvalidierung zählt nur
+verkettete Agent-Text-Chunks. Ein Zwischentest mit falschen Registry-IDs `codex`/`claude`
+scheiterte erwartungsgemäß und ist kein Harness-Fehler.
 
 Worker-/Reviewer-Prompts erhalten jetzt Feature-ID, Ziel, Akzeptanz und MCP-Anweisungen
 für Rückfragen, Feedback und Acknowledgements in derselben Session. Ein unlesbares Review
 eines Feature-Tasks wird als fehlgeschlagener Review behandelt; es gibt weder Freigabe noch
 eine auf Verdacht bezahlte Korrekturrunde. Legacy-Task-Verhalten bleibt erhalten.
+
+Team-Kapazität wird jetzt nach dem tatsächlich verwendeten Profil gezählt: Review inklusive
+Spawn gegen den Reviewer, Orchestrator gegen seinen Team-Eintrag, blockierte laufende Turns
+belegen weiterhin Kapazität. Der Regressionstest umfasst zwei konkurrierende Reviews,
+eine parallele Orchestrator-Session desselben Profils und den Ausschluss des eigenen Claims.
+Idle/dormante Sessions und zusätzliche explizite Harness-Limits sind damit noch nicht vollständig
+abgedeckt; die bestehenden Maschinenlimits bleiben zusätzlich wirksam.
 
 Weiter offen: vollständiger mehrstufiger ACP-Feature-Lauf mit echten unterschiedlichen
 Workern, unabhängiger Review-Korrekturschleife, Rückfrage/Antwort und Wiederaufnahme nach
@@ -132,3 +149,27 @@ Daemon-Neustart; konfigurierbare Ausführungsbudgets, Dormant-Session-Kommunikat
 weiter unten aufgeführten Grenzen. Drei Connectivity-Proben allein sind kein vollständiger
 Multi-Agent-Workflow-Nachweis. Der Branch ist remote nicht vorhanden; es wurde nichts gepusht.
 Die früher blockierten temporären Verzeichnisse wurden nicht manuell gelöscht.
+
+## Reales Feature: konkreter Fortsetzungspunkt
+
+`scripts/prepare-feature-acceptance.mjs --plan` hat ein eigenes temporäres Git-Projekt
+angelegt und einen echten Codex-Planner über den Dev-Daemon gestartet. Das Ergebnis ist
+ein persistenter validierter Plan mit drei Aufgaben im Status **AwaitingApproval**.
+Die menschliche Planfreigabe wurde im Chat angefragt und ist noch ausstehend.
+Keine Worker wurden ohne diese Freigabe gestartet.
+
+- Projekt: `C:/Users/mehme/AppData/Local/Temp/maestro-feature-acceptance-tTNKAH`.
+- Feature: `588c7585-f479-4c4d-b976-ce38e925e2e7`, Orchestrator-Task 1.
+- Manifest: `.maestro/custom-dev-data/feature-acceptance.json` (der Snapshot im Daemon
+  ist für den aktuellen Status maßgeblich; das Manifest hält die Erstellungsdaten).
+- Plan: Claude implementiert Summe und stellt eine Rückfrage; Cursor implementiert
+  unabhängig Produkt. Für den Review-Nachweis enthält Claudes erste Runde eine ausdrücklich
+  deklarierte Fehlereinfügung. Ein separater Codex-Reviewer soll den Fehler zurückgeben.
+  Cursor führt anschließend beide Ergebnisse zusammen, erst nach menschlicher Freigabe
+  und tatsächlich bestätigter Integration beider Voraussetzungen.
+
+Nach menschlicher Planfreigabe gezielt `approve_plan` für genau dieses Feature senden.
+Worker-Turns, Rückfrage, Antwort, Review und Rework beobachten und Prüfbelege sichern.
+Vor jeder Integration die konkreten Commits/Diffs präsentieren und Freigabe einholen.
+Main bleibt unverändert. Dieser Planner-Lauf wurde über die Daemon-Schnittstelle gestartet;
+der separate GUI-Test belegt die GUI-Einstiege, noch keinen zusammenhängenden realen GUI-Lauf.

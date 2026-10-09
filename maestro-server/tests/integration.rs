@@ -58,13 +58,150 @@ fn read_msg(reader: &mut impl Read) -> ServerResponse {
     }
 }
 
-fn spawn_server() -> std::process::Child {
+struct FixtureServer {
+    child: std::process::Child,
+    stdin: Option<std::process::ChildStdin>,
+    stdout: Option<std::process::ChildStdout>,
+    _data: tempfile::TempDir,
+}
+
+impl std::ops::Deref for FixtureServer {
+    type Target = std::process::Child;
+    fn deref(&self) -> &Self::Target {
+        &self.child
+    }
+}
+impl std::ops::DerefMut for FixtureServer {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.child
+    }
+}
+impl Drop for FixtureServer {
+    fn drop(&mut self) {
+        if self
+            .child
+            .try_wait()
+            .expect("fixture process status")
+            .is_none()
+        {
+            self.child.kill().expect("stop owned fixture server");
+            self.child.wait().expect("wait for owned fixture server");
+        }
+    }
+}
+
+fn spawn_server() -> FixtureServer {
     spawn_server_with_home(None)
+}
+
+#[test]
+fn successful_spawn_and_load_allow_an_immediate_prompt_without_registration_races() {
+    let directory = tempfile::tempdir().expect("fixture home");
+    let config_dir = directory.path().join(".maestro-custom");
+    std::fs::create_dir(&config_dir).expect("fixture config");
+    let node = which::which("node").expect("Node.js is required for Fake ACP acceptance");
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/acp-agent.mjs");
+    let platform = if cfg!(target_os = "windows") {
+        "windows-x86_64"
+    } else if cfg!(target_os = "macos") {
+        if cfg!(target_arch = "aarch64") {
+            "darwin-aarch64"
+        } else {
+            "darwin-x86_64"
+        }
+    } else if cfg!(target_arch = "aarch64") {
+        "linux-aarch64"
+    } else {
+        "linux-x86_64"
+    };
+    std::fs::write(
+        config_dir.join("custom-agents.json"),
+        serde_json::json!({"agents":[{
+            "id":"fixture-acp", "name":"Deterministic ACP fixture", "distribution":{"binary":{
+                    (platform): {"cmd":node,"args":[fixture]}
+            }}
+        }]})
+        .to_string(),
+    )
+    .expect("fixture custom configuration");
+    let mut child = spawn_server_with_home(Some(directory.path()));
+    let stdin = child.stdin.as_mut().unwrap();
+    let stdout = child.stdout.as_mut().unwrap();
+    do_handshake(stdin, stdout);
+    let cwd = directory.path().to_string_lossy().into_owned();
+    for round in 0..20 {
+        let session_id = format!("immediate-{round}");
+        write_msg(
+            stdin,
+            &ServerRequest::Spawn(SpawnRequest {
+                agent_id: "fixture-acp".into(),
+                session_id: session_id.clone(),
+                cwd: cwd.clone(),
+                additional_directories: Vec::new(),
+                project_path: None,
+                meta: Default::default(),
+            }),
+        );
+        let started = read_msg(stdout);
+        let ServerResponse::SpawnOk(started) = started else {
+            panic!("spawn failed: {started:?}");
+        };
+        write_msg(
+            stdin,
+            &ServerRequest::Prompt(PromptRequest {
+                session_id: session_id.clone(),
+                content: serde_json::json!("Immediate prompt"),
+            }),
+        );
+        loop {
+            match read_msg(stdout) {
+                ServerResponse::SessionUpdate(_) => {}
+                ServerResponse::TurnEnded(ended) => {
+                    assert_eq!(ended.stop_reason, "end_turn");
+                    break;
+                }
+                other => panic!("immediate prompt failed: {other:?}"),
+            }
+        }
+        let resumed = format!("reloaded-{round}");
+        write_msg(
+            stdin,
+            &ServerRequest::SessionLoad(maestro_protocol::SessionLoadRequest {
+                agent_id: "fixture-acp".into(),
+                session_id: resumed.clone(),
+                resume_session_id: started.acp_session_id.unwrap(),
+                cwd: cwd.clone(),
+                additional_directories: Vec::new(),
+                project_path: None,
+                meta: Default::default(),
+            }),
+        );
+        assert!(matches!(read_msg(stdout), ServerResponse::SessionLoadOk(_)));
+        write_msg(
+            stdin,
+            &ServerRequest::Prompt(PromptRequest {
+                session_id: resumed,
+                content: serde_json::json!("Immediate resumed prompt"),
+            }),
+        );
+        loop {
+            match read_msg(stdout) {
+                ServerResponse::SessionUpdate(_) => {}
+                ServerResponse::TurnEnded(ended) => {
+                    assert_eq!(ended.stop_reason, "end_turn");
+                    break;
+                }
+                other => panic!("immediate resumed prompt failed: {other:?}"),
+            }
+        }
+    }
+    drop(child.stdin.take());
+    assert!(child.wait().expect("fixture server exit").success());
 }
 
 /// `home` redirects the home directory the server reads its user configuration from, so a test
 /// can supply a `custom-agents.json` without touching the home of whoever is running the suite.
-fn spawn_server_with_home(home: Option<&std::path::Path>) -> std::process::Child {
+fn spawn_server_with_home(home: Option<&std::path::Path>) -> FixtureServer {
     let bin = server_binary();
     assert!(
         bin.exists(),
@@ -72,15 +209,28 @@ fn spawn_server_with_home(home: Option<&std::path::Path>) -> std::process::Child
         bin
     );
     let mut command = Command::new(&bin);
+    // HOME must keep real credentials for some probes. Daemon stores are always
+    // isolated independently: the app's data override is not a daemon override.
+    let data = tempfile::Builder::new()
+        .prefix("maestro-wire-")
+        .tempdir()
+        .expect("fixture daemon data");
+    command.env(maestro_protocol::DAEMON_DIR_ENV, data.path());
     if let Some(home) = home {
         command.env("HOME", home).env("USERPROFILE", home);
     }
-    command
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .expect("spawn maestro-server")
+        .expect("spawn maestro-server");
+    FixtureServer {
+        stdin: child.stdin.take(),
+        stdout: child.stdout.take(),
+        child,
+        _data: data,
+    }
 }
 
 /// Perform the protocol handshake that the server requires before any other requests.
