@@ -99,9 +99,18 @@ gegen Neubauen sperren; die echten Harness-Tests verwenden deshalb eine isoliert
 
 `bun run custom:build` baut nur den Installer; `custom:update` fragt nach erfolgreichem
 Build und SHA-256-Anzeige ausdrücklich vor Installation und Session-Unterbrechung.
-Der neue Release-Build und NSIS-Bundle sind erfolgreich abgeschlossen; die zusätzliche
-Kapazitätskorrektur wird vor dem abschließenden Bundle erneut geprüft. Der neue Installer
-wurde nicht installiert. Installation erfordert die separate menschliche Bestätigung.
+Der neue Release-Build und das abschließende NSIS-Bundle einschließlich der geprüften
+Kapazitätskorrektur sind erfolgreich abgeschlossen. Der neue Installer wurde nicht
+installiert. Installation erfordert die separate menschliche Bestätigung.
+
+Aktuellster Installer:
+`target/release/bundle/nsis/Maestro Custom_0.35.1_x64-setup.exe`, 22,23 MiB.
+SHA-256: `A5BA5BA9A8ECF1AC845059839E0319A778151C5FA2077ED1FBB3BFCBF56262C0`.
+Release-Daemon und gebündeltes Asset sind bytegleich:
+`26E6C34466A7F4FF1197A9494F55146C3C5DAAE27220451E0D71742732659E80`,
+Version `0.35.1-protocol-14`. Build-Logs:
+`%TEMP%/maestro-custom-release3.log`, `maestro-custom-final-server-release.log`
+und `maestro-custom-final-bundle.log`.
 
 Bestanden in dieser Fortsetzung:
 
@@ -119,7 +128,12 @@ Bestanden in dieser Fortsetzung:
   `%TEMP%/maestro-custom-final-server-tests.log`.
 - Neue Release-App ohne `wdio`: beide echten Windows-GUI-Dateien bestanden,
   fünf Smoke-Assertions plus Team-/Feature-/App-Neustart-Test.
-  `%TEMP%/maestro-custom-release-gui-latest.log` (2:31 Minuten).
+  `%TEMP%/maestro-custom-release-gui-latest.log` (2:31 Minuten). Nach dem abschließenden
+  Kapazitäts-Bundle erneut bestanden: `%TEMP%/maestro-custom-final-release-gui.log`
+  (1:46 Minuten, zwei Testdateien erfolgreich).
+- Abschließender Workspace-Check: `%TEMP%/maestro-custom-final-workspace-check.log`.
+  Lint: `maestro-custom-final-lint2.log`, nur vier bekannte Warnungen. Format:
+  `maestro-custom-final-format2.log`; Rustfmt ebenfalls bestanden.
 
 Die erste reale ACP-Probe reproduzierte Claudes `unknown session` unmittelbar nach
 `SpawnOk`. Ursache: Erfolgsantwort vor Registrierung im Dispatch-Loop. Spawn und Reload
