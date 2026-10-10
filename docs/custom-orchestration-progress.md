@@ -269,8 +269,17 @@ Der vollständige Frontend-Lauf ergab 1585 bestanden und zwei Zeitüberschreitun
 5000 ms (`%TEMP%/maestro-session-all-tests-verified.log`). Die beiden unveränderten
 Dateien bestanden einzeln anschließend mit allen fünf Tests
 (`%TEMP%/maestro-session-timeouts-rerun.log`). Dies ist kein vollständig grüner Gesamtlauf.
-Der neue Windows-GUI-Lauf wurde durch Timeouts in Fixture-Start, Team-Speicherung oder
-App-Neustart unterbrochen. Die Auswahl berücksichtigt jetzt mehrere Werkzeugleisten
-in inaktiven Ansichten. Der nächste isolierte Versuch läuft mit
-`%TEMP%/maestro-session-gui-isolated.log`; nicht als bestanden werten, bevor das Log
-den gesamten Test bestätigt. Der frühere GUI-Nachweis bleibt separat oben dokumentiert.
+Die ersten Windows-GUI-Läufe wurden durch Timeouts in Fixture-Start, Team-Speicherung
+oder App-Neustart unterbrochen. Die Auswahl berücksichtigt jetzt mehrere Werkzeugleisten
+in inaktiven Ansichten. Der abschließende isolierte Dev-GUI-Lauf besteht vollständig:
+`%TEMP%/maestro-session-gui-isolated.log` (1:52 Minuten). Er bestätigt neun Teammitglieder,
+persistierte Chatnotiz nach App-Neustart, den direkten Plan-Einstieg und den sichtbaren
+Hinweis bei einer beendeten Orchestrator-Sitzung. Der Plan blieb ohne Child-Tasks, bis das
+eigene Test-Feature abgebrochen wurde. Screenshot: `%TEMP%/maestro-custom-plan-approval.png`.
+Dies ist ein Dev-GUI-Nachweis; Release-Installer und Release-GUI bleiben offen.
+
+Nach der sichtbaren Freigabeleiste wurde der vorbereitete Abnahmelauf erneut nur lesend
+geprüft: nun `Running`, drei Planeinträge und Child-Tasks `[2, 3, 4]`. Diese Freigabe
+wurde nicht von diesem Agenten ausgeführt. Die echte Dev-Arbeit darf jetzt nicht für
+Builds oder GUI-Tests neu gestartet oder gestoppt werden; Integrationsfreigaben bleiben
+menschlich. Die GUI-Korrektur ist lokal in `0b4a3856` gespeichert.
