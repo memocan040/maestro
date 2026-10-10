@@ -37,6 +37,8 @@ pub(crate) async fn handle(app_state: Arc<AppState>, session_id: &str, call: Hos
             automation_tools::delete_automation(&app_state, session_id, &call.arguments).await
         }
         "run_automation" => automation_tools::run_automation(&app_state, session_id, &call).await,
+        "delegate_assistant" => automation_tools::delegate_assistant(&app_state, session_id, &call.arguments).await,
+        "wait_assistant" => automation_tools::wait_assistant(&app_state, session_id, &call.arguments).await,
         "list_automation_runs" => {
             automation_tools::list_automation_runs(&app_state, session_id, &call.arguments).await
         }
