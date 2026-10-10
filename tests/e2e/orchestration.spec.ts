@@ -39,7 +39,22 @@ async function element(selector: string) {
   return result["element-6066-11e4-a52e-4f735466cecf"] as string;
 }
 async function click(selector: string) {
-  await nativeRequest(`element/${await element(selector)}/click`, {});
+  const matches = await nativeRequest("elements", {
+    using: selector.startsWith("//") ? "xpath" : "css selector",
+    value: selector,
+  });
+  let lastError: unknown;
+  for (const match of matches) {
+    try {
+      await nativeRequest(`element/${match["element-6066-11e4-a52e-4f735466cecf"]}/click`, {});
+      return;
+    } catch (error) {
+      // Inactive animated views can retain another copy of the same toolbar.
+      if (!/not interactable|click intercepted/i.test(String(error))) throw error;
+      lastError = error;
+    }
+  }
+  throw lastError ?? new Error(`No clickable element: ${selector}`);
 }
 async function button(text: string) {
   await click(`//button[normalize-space(.)='${text}']`);
@@ -110,7 +125,7 @@ describe("Custom orchestration in the real desktop app", function () {
       },
     });
     await browser.refresh();
-    await visible("orchestration-demo");
+    await visible("orchestration-demo", 120_000);
     await click("[data-home-project] > button");
     try {
       await visible("Features / New Feature", 120_000);
@@ -166,13 +181,16 @@ describe("Custom orchestration in the real desktop app", function () {
         await click(`[aria-label="Team role ${role}"]`);
       }
       await button("Save agent");
-      await browser.waitUntil(async () => {
-        const snapshot = await invoke<{ members: { name: string }[] }>("orchestration", {
-          projectId,
-          operation: { action: "snapshot" },
-        });
-        return snapshot.members.some((member) => member.name === name);
-      });
+      await browser.waitUntil(
+        async () => {
+          const snapshot = await invoke<{ members: { name: string }[] }>("orchestration", {
+            projectId,
+            operation: { action: "snapshot" },
+          });
+          return snapshot.members.some((member) => member.name === name);
+        },
+        { timeout: 60_000 },
+      );
     }
     await browser.saveScreenshot(join(tmpdir(), "maestro-custom-agent-team.png"));
     await closeDialog();
@@ -203,7 +221,7 @@ describe("Custom orchestration in the real desktop app", function () {
     if (
       !(await browser.execute(() => document.body.innerText.includes("Features / New Feature")))
     ) {
-      await visible("orchestration-demo");
+      await visible("orchestration-demo", 120_000);
       await click("[data-home-project] > button");
     }
     await visible("Features / New Feature", 120_000);
@@ -225,6 +243,44 @@ describe("Custom orchestration in the real desktop app", function () {
     expect(await browser.execute(() => document.body.innerText)).toContain("GUI verified feature");
     await visible("Start planning");
     await visible("GUI chat note survives restart");
+    const pendingPlan = await invoke<{
+      features: { id: string; orchestrator_task: number; task_ids: number[] }[];
+    }>("orchestration", {
+      projectId,
+      operation: { action: "snapshot" },
+    });
+    const waitingFeature = pendingPlan.features[0];
+    await invoke("orchestration", {
+      projectId,
+      operation: {
+        action: "submit_plan",
+        feature_id: waitingFeature.id,
+        tasks: [
+          {
+            key: "gui-worker",
+            title: "GUI plan awaiting user",
+            instructions: "Never started by this GUI test",
+            acceptance: ["Requires user approval"],
+            member_id: restored.members.find((m) => m.profile_id === "gui-worker")!.id,
+            depends_on: [],
+          },
+        ],
+      },
+    });
+    await closeDialog();
+    await button("Review pending plan (1)");
+    await visible("Approve plan and start workers");
+    await visible("GUI plan awaiting user");
+    await button("Orchestrator session");
+    await visible("No active orchestrator session");
+    await visible("GUI chat note survives restart");
+    const unapproved = await invoke<{ features: { task_ids: number[] }[] }>("orchestration", {
+      projectId,
+      operation: { action: "snapshot" },
+    });
+    expect(unapproved.features[0].task_ids).toEqual([]);
+    await browser.saveScreenshot(join(tmpdir(), "maestro-custom-plan-approval.png"));
+    // Inspect the gate; never approve or start this fixture's workers.
     await button("cancel");
     await visible("GUI verified feature · Cancelled");
     await closeDialog();

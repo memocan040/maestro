@@ -3,6 +3,9 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+// Feature-plan navigation is covered independently; these tests exercise session spawning.
+vi.mock("@/views/kanban/FeaturePanel", () => ({ FeaturePanel: () => null }));
+
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));

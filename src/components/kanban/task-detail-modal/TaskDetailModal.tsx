@@ -10,6 +10,7 @@ import type {
 } from "@/types/bindings";
 import { MAESTRO_BRANCH_PREFIX, taskBranchName } from "@/lib/generateSessionName";
 import { Button } from "@/ui/button";
+import { FeaturePanel } from "@/views/kanban/FeaturePanel";
 import { IssueTypeChip } from "@/components/kanban/shared/IssueTypeChip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/ui/select";
 import { Dialog, DialogContent, DialogTitle, DialogHeader } from "@/ui/dialog";
@@ -295,6 +296,7 @@ export const TaskDetailModal = ({ taskId }: TaskDetailModalProps) => {
                 {isEditable ? "EDIT TASK" : "TASK DETAIL"}
               </DialogTitle>
               <div className="flex-1" />
+              {projectId !== null && <FeaturePanel projectId={projectId} taskId={task.id} />}
               <Select
                 value={task.status}
                 onValueChange={handleStatusChange}

@@ -9,16 +9,19 @@ import {
   useStartOrchestrator,
 } from "@/services/orchestration.service";
 import { useTasksQuery } from "@/services/task.service";
-import { useNavigationActions } from "@/store/navigationStore";
+import { useNavigate } from "@/store/navigationStore";
+import { useActiveSessionsQuery } from "@/services/execution.service";
 import { TeamChat } from "./TeamChat";
 
-export function FeaturePanel({ projectId }: { projectId: number }) {
+export function FeaturePanel({ projectId, taskId }: { projectId: number; taskId?: number }) {
   const query = useOrchestration(projectId);
   const change = useOrchestrationMutation(projectId);
   const start = useStartOrchestrator(projectId);
   const tasks = useTasksQuery(projectId);
-  const navigation = useNavigationActions();
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
+  const sessions = useActiveSessionsQuery(open ? projectId : undefined);
+  const [sessionNotice, setSessionNotice] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [goal, setGoal] = useState("");
@@ -32,11 +35,46 @@ export function FeaturePanel({ projectId }: { projectId: number }) {
     change.mutate(operation, { onError: (e) => setError(e.message) });
   };
   const feature = query.data?.features.find((f) => f.id === selected);
+  const related = query.data?.features.find(
+    (f) => f.orchestrator_task === taskId || f.task_ids.includes(taskId ?? -1),
+  );
+  const pending = query.data?.features.filter((f) => f.status === "AwaitingApproval") ?? [];
+  const openFeature = (id: string | null) => {
+    setSessionNotice(null);
+    setSelected(id);
+    setOpen(true);
+  };
+  const openTask = (id: number) => {
+    setOpen(false);
+    navigate({ taskId: id });
+  };
+  const openOrchestrator = () => {
+    const session = sessions.data?.find((s) => s.task_id === feature?.orchestrator_task);
+    if (session) {
+      setOpen(false);
+      navigate({ sessionId: session.session_id });
+    } else {
+      setSessionNotice(
+        "No active orchestrator session. The saved conversation is in Team Chat below; send a message there to continue.",
+      );
+      document.getElementById(`feature-chat-${feature?.id}`)?.scrollIntoView({ block: "start" });
+    }
+  };
+  if (taskId !== undefined && !related) return null;
   return (
     <>
-      <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
-        Features / New Feature
+      <Button variant="outline" size="sm" onClick={() => openFeature(related?.id ?? selected)}>
+        {taskId === undefined
+          ? "Features / New Feature"
+          : related?.status === "AwaitingApproval"
+            ? "Review feature plan"
+            : "Feature / Team Chat"}
       </Button>
+      {taskId === undefined && pending.length > 0 && (
+        <Button size="sm" onClick={() => openFeature(pending[0].id)}>
+          Review pending plan ({pending.length})
+        </Button>
+      )}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-4xl max-h-[85vh] overflow-y-auto">
           <DialogTitle>Project orchestration</DialogTitle>
@@ -216,7 +254,8 @@ export function FeaturePanel({ projectId }: { projectId: number }) {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => navigation.setActiveTaskId(feature.orchestrator_task)}
+                  disabled={sessions.isLoading}
+                  onClick={openOrchestrator}
                 >
                   Orchestrator session
                 </Button>
@@ -276,25 +315,27 @@ export function FeaturePanel({ projectId }: { projectId: number }) {
               {feature.task_ids.map((id) => {
                 const t = tasks.data?.find((t) => t.id === id);
                 return (
-                  <Button
-                    key={id}
-                    variant="outline"
-                    size="sm"
-                    onClick={() => navigation.setActiveTaskId(id)}
-                  >
+                  <Button key={id} variant="outline" size="sm" onClick={() => openTask(id)}>
                     #{id} {t?.title} · {t?.status} {t?.phase_status}
                   </Button>
                 );
               })}
               {query.data && (
-                <TeamChat
-                  key={feature.id}
-                  projectId={projectId}
-                  feature={feature}
-                  snapshot={query.data}
-                  tasks={tasks.data ?? []}
-                  openTask={navigation.setActiveTaskId}
-                />
+                <div id={`feature-chat-${feature.id}`}>
+                  {sessionNotice && (
+                    <p role="status" className="mb-3 text-sm text-muted-foreground">
+                      {sessionNotice}
+                    </p>
+                  )}
+                  <TeamChat
+                    key={feature.id}
+                    projectId={projectId}
+                    feature={feature}
+                    snapshot={query.data}
+                    tasks={tasks.data ?? []}
+                    openTask={openTask}
+                  />
+                </div>
               )}
             </div>
           )}

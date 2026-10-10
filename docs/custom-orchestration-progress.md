@@ -247,12 +247,30 @@ geprüft: `AwaitingApproval`, drei Planeinträge, `task_ids: []`. Er wurde weder
 noch durch neue Tests verwendet. Neue Testprojekte erhielten ausschließlich eigene
 Freigaben. Keine Worker-Ergebnisse wurden in Main integriert.
 
-Fortsetzungspunkt für die Auslieferungsprüfung: `node scripts/custom-desktop.mjs build`
-läuft mit Log `%TEMP%/maestro-teamchat-release-complete.log` (Desktop-Kompilierung).
-Danach läuft bereits eine zweite sequenzielle Strecke: `bun run server:bundle` baut
-den Daemon mit dem abschließenden Recovery-Fix; `bun run tauri bundle --bundles nsis`
-bündelt diese externe Ressource mit der zuvor gebauten unveränderten Desktop-Binary.
-Logs: `%TEMP%/maestro-teamchat-release-daemon-final.log` und
-`%TEMP%/maestro-teamchat-installer-final.log`. Erst der zweite Installer ist maßgeblich.
-Danach echten GUI-Lauf mit `target/release/maestro.exe` ausführen, finalen Daemon-/Installer-
-Hash ergänzen und Nachweis lokal committen. Nicht installieren und nicht pushen.
+Die Auslieferungsprüfung wurde wegen der nachfolgenden GUI-Korrekturen unterbrochen.
+Die beiden eigenen Build-Prozesse wurden beendet; kein neuer Installer ist nachgewiesen.
+Fortsetzung: `node scripts/custom-desktop.mjs build` mit dem endgültigen Frontend erneut
+ausführen, danach echten GUI-Lauf mit `target/release/maestro.exe` und dem gebündelten
+Daemon durchführen, finalen Daemon-/Installer-Hash ergänzen und lokal committen.
+Nicht installieren und nicht pushen.
+
+Aktuelle GUI-Korrektur: wartende Pläne sind über `Review pending plan (N)` in Kanban und
+Agents sowie `Review feature plan` in der zugehörigen Task-Detailansicht erreichbar.
+Der Freigabeschritt bleibt ausschließlich `Approve plan and start workers`.
+`Orchestrator session` navigiert jetzt zur exakten aktiven Sitzung statt zur Task-
+Detailansicht. Ohne aktive Sitzung zeigt es einen Hinweis beim gespeicherten Team Chat;
+die Anzeige startet keinen Agenten. Die gezielten Navigation-/Chat-Tests bestanden:
+23 Tests (`%TEMP%/maestro-session-navigation-tests.log`). Der ergänzte Spawn-Dialog-
+Test isoliert die separat geprüfte Feature-Leiste; danach bestanden alle vier Spawn-
+Tests zusammen mit sieben Feature-Tests (`%TEMP%/maestro-session-agent-regression-fixed.log`).
+Frontend-Build (`%TEMP%/maestro-session-build-verified.log`), Lint (vier bestehende
+Warnungen), beide Formatprüfungen und `git diff --check` bestanden.
+Der vollständige Frontend-Lauf ergab 1585 bestanden und zwei Zeitüberschreitungen nach
+5000 ms (`%TEMP%/maestro-session-all-tests-verified.log`). Die beiden unveränderten
+Dateien bestanden einzeln anschließend mit allen fünf Tests
+(`%TEMP%/maestro-session-timeouts-rerun.log`). Dies ist kein vollständig grüner Gesamtlauf.
+Der neue Windows-GUI-Lauf wurde durch Timeouts in Fixture-Start, Team-Speicherung oder
+App-Neustart unterbrochen. Die Auswahl berücksichtigt jetzt mehrere Werkzeugleisten
+in inaktiven Ansichten. Der nächste isolierte Versuch läuft mit
+`%TEMP%/maestro-session-gui-isolated.log`; nicht als bestanden werten, bevor das Log
+den gesamten Test bestätigt. Der frühere GUI-Nachweis bleibt separat oben dokumentiert.
