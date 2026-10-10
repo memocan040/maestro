@@ -7,7 +7,6 @@ import { AgentConfigFields } from "@/components/common/agent-config/AgentConfigF
 import { useAgentProfilesQuery, useSaveAgentProfilesMutation } from "@/services/project.service";
 import { isReadOnlyRole } from "@/lib/permission-modes";
 import { useSelectedProject } from "@/store/projectStore";
-import { useOrchestration } from "@/services/orchestration.service";
 import type { AgentProfile, AgentRole, ConnectionKey, ProfilesDocument } from "@/types/bindings";
 import { cn } from "@/lib/utils";
 
@@ -196,7 +195,6 @@ function serialize(profiles: AgentProfile[], defaults: Record<string, string>): 
 }
 
 export function AgentProfilesSection({ projectId, agents, connection }: AgentProfilesSectionProps) {
-  const team = useOrchestration(projectId);
   const profilesQuery = useAgentProfilesQuery(projectId);
   const saveProfiles = useSaveAgentProfilesMutation();
   const projectPath = useSelectedProject()?.path ?? null;
@@ -322,42 +320,9 @@ export function AgentProfilesSection({ projectId, agents, connection }: AgentPro
       </div>
 
       {ROLES.map(({ role, title, blurb }) => {
-        const forRole = profiles.filter((p) => p.role === role || p.id === defaults[role]);
-        const suitable =
-          team.data?.members.filter(
-            (m) =>
-              m.enabled &&
-              (role === "Coder"
-                ? m.worker
-                : role === "Reviewer"
-                  ? m.reviewer
-                  : role === "Refiner"
-                    ? m.refiner
-                    : m.planner || m.orchestrator),
-          ) ?? [];
+        const forRole = profiles.filter((p) => p.role === role);
         return (
           <div key={role} className="space-y-2 pt-2 border-t border-border first:border-t-0">
-            {suitable.length > 0 && (
-              <label className="block text-xs">
-                Team default for {title}
-                <select
-                  aria-label={`Team default for ${title}`}
-                  className="ml-2 rounded border bg-background p-1"
-                  value={suitable.find((m) => m.profile_id === defaults[role])?.id ?? ""}
-                  onChange={(e) => {
-                    const member = suitable.find((m) => m.id === e.target.value);
-                    if (member) makeDefault(role, member.profile_id);
-                  }}
-                >
-                  <option value="">Use classic profile selection</option>
-                  {suitable.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <p className="text-xs font-semibold">{title}</p>

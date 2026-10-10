@@ -44,14 +44,6 @@ pub async fn squash_merge_to_base(
     commit_message: &str,
 ) -> Result<MergeResult, String> {
     let repo_path = conn.path();
-    // Conflict cleanup uses reset --hard; never enter it with the user's uncommitted changes.
-    let initial_status = run_git_in_dir(conn, repo_path, &["status", "--porcelain"]).await?;
-    if !initial_status.trim().is_empty() {
-        return Err(
-            "Commit or stash changes in the project checkout before integrating a worker result"
-                .into(),
-        );
-    }
 
     run_git_in_dir(conn, repo_path, &["checkout", target_branch])
         .await
@@ -263,23 +255,7 @@ pub async fn approve_task_and_merge(
     let worktree = task_worktree(&app_state, project_id, task_id)
         .await?
         .map(|worktree| (worktree.branch_name, worktree.path, worktree.id));
-    let snapshot = crate::acp::connection_server::query_project_store(app_state.inner(), project_id,
-        |project_path| maestro_protocol::ServerRequest::Orchestration(maestro_protocol::OrchestrationRequest { project_path, operation: serde_json::json!({"action":"snapshot"}) }),
-        crate::acp::connection_server::reply!(maestro_protocol::ServerResponse::OrchestrationOk(value) => value)).await?;
-    let feature_target = snapshot["features"]
-        .as_array()
-        .and_then(|features| {
-            features.iter().find(|f| {
-                f["task_ids"]
-                    .as_array()
-                    .is_some_and(|ids| ids.iter().any(|id| id.as_i64() == Some(task_id as i64)))
-            })
-        })
-        .and_then(|f| f["integration_branch"].as_str())
-        .map(str::to_string);
-    let base_branch = feature_target
-        .clone()
-        .unwrap_or_else(|| task.base_branch.clone());
+    let base_branch = task.base_branch.clone();
 
     let (project, git_conn) = get_project_with_git_conn(app_state.inner(), project_id)
         .await
@@ -424,19 +400,6 @@ pub async fn approve_task_and_merge(
         squash_merge_to_base(&git_conn, &branch_name, &base_branch, &commit_message).await?;
 
     if merge_result.success {
-        if feature_target.is_some() {
-            let commit_sha = run_git_in_dir(
-                &git_conn,
-                &repo_path,
-                &["rev-parse", &format!("refs/heads/{base_branch}")],
-            )
-            .await?
-            .trim()
-            .to_string();
-            crate::acp::connection_server::query_project_store(app_state.inner(), project_id,
-                |project_path| maestro_protocol::ServerRequest::Orchestration(maestro_protocol::OrchestrationRequest { project_path, operation: serde_json::json!({"action":"record_integration", "task_id":task_id,"commit_sha":commit_sha}) }),
-                crate::acp::connection_server::reply!(maestro_protocol::ServerResponse::OrchestrationOk(value) => value)).await?;
-        }
         // 4a. Merge succeeded - finalize (mark Done, cleanup worktree)
         finalize_successful_merge(
             app_state.inner(),
@@ -1140,40 +1103,6 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
         String::from_utf8_lossy(&output.stdout).into_owned()
-    }
-
-    #[tokio::test]
-    async fn squash_merge_preserves_uncommitted_project_changes() {
-        let temp = tempfile::tempdir().unwrap();
-        let repo = temp.path();
-        git(repo, &["init", "-b", "main"]);
-        git(
-            repo,
-            &[
-                "-c",
-                "user.name=Test",
-                "-c",
-                "user.email=test@example.test",
-                "-c",
-                "commit.gpgsign=false",
-                "commit",
-                "--allow-empty",
-                "-m",
-                "Initial",
-            ],
-        );
-        git(repo, &["branch", "worker"]);
-        std::fs::write(repo.join("personal.txt"), "Keep my work").unwrap();
-        let connection = GitConnection::Local {
-            path: repo.to_string_lossy().into_owned(),
-        };
-        let result = squash_merge_to_base(&connection, "worker", "main", "Merge").await;
-        assert!(result.unwrap_err().contains("Commit or stash"));
-        assert_eq!(
-            std::fs::read_to_string(repo.join("personal.txt")).unwrap(),
-            "Keep my work"
-        );
-        assert_eq!(git(repo, &["branch", "--show-current"]).trim(), "main");
     }
 
     #[tokio::test]

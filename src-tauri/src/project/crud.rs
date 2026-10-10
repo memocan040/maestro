@@ -242,25 +242,6 @@ pub async fn open_project(
     project_id: i32,
 ) -> Result<Project, String> {
     let project = crate::project::lock::load_project(&app_state, project_id)?;
-    let connection = crate::core::get_git_connection(&project, &app_state)
-        .await
-        .map_err(|e| e.to_string())?;
-    let directory = format!("{}/.maestro", connection.path());
-    let owner: serde_json::Value =
-        project_storage::read_maestro_json(&connection, "custom-owner.json").await;
-    if crate::connectivity::files::exists(&connection, &directory).await
-        && owner["identifier"] != "com.memocan040.maestro.custom"
-    {
-        return Err("CUSTOM_PROJECT_CONFIRMATION: This project already has Maestro data. Confirm before Maestro Custom uses its project settings and worktrees.".into());
-    }
-    if owner["identifier"] != "com.memocan040.maestro.custom" {
-        project_storage::write_maestro_json(
-            &connection,
-            "custom-owner.json",
-            &serde_json::json!({"identifier":"com.memocan040.maestro.custom"}),
-        )
-        .await?;
-    }
 
     // Errors if another window holds it, or if its server cannot be reached to ask.
     crate::project::lock::acquire(&app_state, &project).await?;
@@ -427,7 +408,7 @@ async fn init_project_storage(
 ) {
     let result =
         match crate::core::git_connection_for(app_state, path.to_string(), connection_key).await {
-            Ok(conn) => initialize_custom_storage(&conn).await,
+            Ok(conn) => project_storage::ensure_project_storage(&conn).await,
             Err(e) => Err(e),
         };
     if let Err(e) = result {
@@ -435,71 +416,11 @@ async fn init_project_storage(
     }
 }
 
-async fn initialize_custom_storage(conn: &crate::models::GitConnection) -> Result<(), String> {
-    let exists =
-        crate::connectivity::files::try_exists(conn, &format!("{}/.maestro", conn.path())).await?;
-    let owner: Option<serde_json::Value> =
-        project_storage::read_maestro_json(conn, "custom-owner.json").await;
-    if exists
-        && owner
-            .as_ref()
-            .and_then(|v| v.get("identifier"))
-            .and_then(|v| v.as_str())
-            != Some("com.memocan040.maestro.custom")
-    {
-        // Registration may precede the visible takeover dialog. Do not touch existing project data yet.
-        return Ok(());
-    }
-    project_storage::ensure_project_storage(conn).await?;
-    if !exists {
-        project_storage::write_maestro_json(
-            conn,
-            "custom-owner.json",
-            &serde_json::json!({"identifier":"com.memocan040.maestro.custom"}),
-        )
-        .await?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::core::schema::initialize_schema;
     use rusqlite::Connection;
-
-    #[tokio::test]
-    async fn registration_does_not_touch_existing_maestro_data_before_confirmation() {
-        let dir = tempfile::tempdir().unwrap();
-        let storage = dir.path().join(".maestro");
-        std::fs::create_dir(&storage).unwrap();
-        std::fs::write(storage.join("settings.json"), "Official settings").unwrap();
-        let conn = crate::models::GitConnection::Local {
-            path: dir.path().to_string_lossy().into_owned(),
-        };
-        initialize_custom_storage(&conn).await.unwrap();
-        assert_eq!(
-            std::fs::read_to_string(storage.join("settings.json")).unwrap(),
-            "Official settings"
-        );
-        assert_eq!(std::fs::read_dir(&storage).unwrap().count(), 1);
-        assert!(!storage.join("custom-owner.json").exists());
-    }
-
-    #[tokio::test]
-    async fn a_fresh_custom_project_is_marked_without_a_false_takeover_prompt() {
-        let dir = tempfile::tempdir().unwrap();
-        let conn = crate::models::GitConnection::Local {
-            path: dir.path().to_string_lossy().into_owned(),
-        };
-        initialize_custom_storage(&conn).await.unwrap();
-        let owner: Option<serde_json::Value> =
-            project_storage::read_maestro_json(&conn, "custom-owner.json").await;
-        assert_eq!(
-            owner.unwrap()["identifier"],
-            "com.memocan040.maestro.custom"
-        );
-    }
 
     fn test_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();

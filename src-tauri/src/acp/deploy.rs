@@ -2,7 +2,7 @@ use crate::command_ext::NoConsoleWindow;
 use tauri::{AppHandle, Manager};
 
 const REMOTE_INSTALL_DIR: &str = ".local/bin";
-const REMOTE_BINARY_NAME: &str = "maestro-custom-server";
+const REMOTE_BINARY_NAME: &str = "maestro-server";
 
 #[derive(Clone, serde::Serialize)]
 pub struct DeployStatus {
@@ -21,11 +21,11 @@ pub struct DeployResult {
 /// constructing download URLs and when naming locally-cached binaries.
 pub(crate) fn asset_filename(triple: &str) -> String {
     match triple {
-        "x86_64-unknown-linux-gnu" => "maestro-custom-server-linux-x86_64".to_string(),
-        "aarch64-unknown-linux-gnu" => "maestro-custom-server-linux-arm64".to_string(),
-        "aarch64-apple-darwin" => "maestro-custom-server-macos-arm64".to_string(),
-        "x86_64-pc-windows-msvc" => "maestro-custom-server-windows-x86_64.exe".to_string(),
-        other => format!("maestro-custom-server-{}", other),
+        "x86_64-unknown-linux-gnu" => "maestro-server-linux-x86_64".to_string(),
+        "aarch64-unknown-linux-gnu" => "maestro-server-linux-arm64".to_string(),
+        "aarch64-apple-darwin" => "maestro-server-macos-arm64".to_string(),
+        "x86_64-pc-windows-msvc" => "maestro-server-windows-x86_64.exe".to_string(),
+        other => format!("maestro-server-{}", other),
     }
 }
 
@@ -60,7 +60,7 @@ fn linux_triple_for_arch(arch: &str) -> Result<&'static str, String> {
 /// Returns the platform-appropriate binary name for the remote target.
 fn remote_binary_name(triple: &str) -> &'static str {
     match triple {
-        "x86_64-pc-windows-msvc" => "maestro-custom-server.exe",
+        "x86_64-pc-windows-msvc" => "maestro-server.exe",
         _ => REMOTE_BINARY_NAME,
     }
 }
@@ -78,7 +78,7 @@ fn powershell_encoded(script: &str) -> String {
     )
 }
 
-/// Ensure maestro-custom-server exists on remote with the correct version.
+/// Ensure maestro-server exists on remote with the correct version.
 /// Downloads the appropriate binary locally if needed, then deploys via SFTP.
 /// Returns the absolute path to use for spawning.
 ///
@@ -113,7 +113,7 @@ pub async fn ensure_remote_server(
     let windows_ps_probe = "\
         $a=$env:PROCESSOR_ARCHITECTURE; \
         $h=($env:USERPROFILE -replace [char]92,[char]47); \
-        $p=$env:USERPROFILE+[char]92+'.local'+[char]92+'bin'+[char]92+'maestro-custom-server.exe'; \
+        $p=$env:USERPROFILE+[char]92+'.local'+[char]92+'bin'+[char]92+'maestro-server.exe'; \
         $v=if(Test-Path $p){try{(& $p --app-version 2>$null).Trim()}catch{'MISSING'}}else{'MISSING'}; \
         Write-Output ('Windows_NT|||' + $a + '|||' + $v + '|||' + $h)";
 
@@ -190,7 +190,7 @@ pub async fn ensure_remote_server(
             .map_err(|e| format!("Failed to remove existing binary: {}", e))?;
     }
 
-    let transfer_id = format!("deploy-maestro-custom-server-{}", connection_id);
+    let transfer_id = format!("deploy-maestro-server-{}", connection_id);
     crate::connectivity::ssh::sftp::upload_file(
         ssh,
         &local_binary,
@@ -215,7 +215,7 @@ pub async fn ensure_remote_server(
     })
 }
 
-/// Ensure maestro-custom-server exists inside a WSL distro with the correct version.
+/// Ensure maestro-server exists inside a WSL distro with the correct version.
 /// Downloads the binary matching the distro's architecture if needed, then deploys via stdin pipe.
 /// Returns the absolute Linux path to the binary.
 #[cfg(windows)]
@@ -325,7 +325,7 @@ pub async fn ensure_wsl_server(
     })
 }
 
-/// Ensure maestro-custom-server exists inside a container with the correct version.
+/// Ensure maestro-server exists inside a container with the correct version.
 /// Probes via a single exec, downloads the Linux binary locally if needed, then deploys via stdin pipe.
 /// Returns the absolute Linux path to the binary inside the container.
 pub async fn ensure_container_server(
@@ -441,23 +441,23 @@ pub async fn ensure_container_server(
     })
 }
 
-/// Ensure the native platform maestro-custom-server binary is cached in the app data dir.
+/// Ensure the native platform maestro-server binary is cached in the app data dir.
 /// Downloads from GitHub releases if absent or version-mismatched.
-/// Also installs a well-known symlink (Unix) or copy (Windows) at ~/.local/bin/maestro-custom-server
+/// Also installs a well-known symlink (Unix) or copy (Windows) at ~/.local/bin/maestro-server
 /// so agent subprocesses can resolve it via PATH.
 /// Called during preflight for local connections and as fallback in open_local_transport.
 pub async fn ensure_local_server(app_handle: &AppHandle) -> Result<std::path::PathBuf, String> {
     let cached = ensure_cached_binary(app_handle, crate::acp::HOST_TRIPLE, Some(0)).await?;
     if let Err(e) = install_local_link(&cached).await {
         log::warn!(
-            "Warning: failed to install ~/.local/bin/maestro-custom-server: {}",
+            "Warning: failed to install ~/.local/bin/maestro-server: {}",
             e
         );
     }
     Ok(cached)
 }
 
-/// Install a well-known entry at ~/.local/bin/maestro-custom-server pointing to the cached binary.
+/// Install a well-known entry at ~/.local/bin/maestro-server pointing to the cached binary.
 /// On Unix: symlink. On Windows: rename-old + copy + delete-old.
 /// Non-fatal — callers log the error and continue.
 async fn install_local_link(src: &std::path::Path) -> Result<(), String> {
@@ -477,12 +477,12 @@ async fn install_local_link(src: &std::path::Path) -> Result<(), String> {
 
     #[cfg(unix)]
     {
-        let dest = bin_dir.join("maestro-custom-server");
+        let dest = bin_dir.join("maestro-server");
         // Remove stale symlink or file before recreating.
         let _ = tokio::fs::remove_file(&dest).await;
         tokio::fs::symlink(src, &dest).await.map_err(|e| {
             format!(
-                "Failed to create symlink ~/.local/bin/maestro-custom-server: {}",
+                "Failed to create symlink ~/.local/bin/maestro-server: {}",
                 e
             )
         })?;
@@ -490,16 +490,13 @@ async fn install_local_link(src: &std::path::Path) -> Result<(), String> {
 
     #[cfg(windows)]
     {
-        let dest = bin_dir.join("maestro-custom-server.exe");
-        let old = bin_dir.join("maestro-custom-server.exe.old");
+        let dest = bin_dir.join("maestro-server.exe");
+        let old = bin_dir.join("maestro-server.exe.old");
         // Rename existing binary aside first so Windows doesn't block overwrite of a running file.
         let _ = tokio::fs::rename(&dest, &old).await;
-        tokio::fs::copy(src, &dest).await.map_err(|e| {
-            format!(
-                "Failed to copy maestro-custom-server.exe to ~/.local/bin: {}",
-                e
-            )
-        })?;
+        tokio::fs::copy(src, &dest)
+            .await
+            .map_err(|e| format!("Failed to copy maestro-server.exe to ~/.local/bin: {}", e))?;
         // Clean up the old copy; ignore failure — it may still be in use by a running process.
         let _ = tokio::fs::remove_file(&old).await;
     }
@@ -507,7 +504,7 @@ async fn install_local_link(src: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Ensure the maestro-custom-server binary for the given triple is cached in the app data dir.
+/// Ensure the maestro-server binary for the given triple is cached in the app data dir.
 /// Downloads from GitHub releases if absent or version-mismatched.
 /// Used as the local staging binary before SSH or WSL deployment.
 async fn ensure_remote_binary_local(
@@ -539,17 +536,10 @@ async fn ensure_cached_binary(
     if dest.exists() {
         if let Some(cached_version) = check_cached_version(&dest).await {
             if cached_version == local_version {
-                // Local custom builds can change without a version bump. A matching
-                // version alone must not leave the previous executable in the cache.
-                let source = source_server_binary(app_handle, triple)?;
-                let unchanged = tokio::fs::read(&source).await.map_err(|e| e.to_string())?
-                    == tokio::fs::read(&dest).await.map_err(|e| e.to_string())?;
-                if unchanged {
-                    if let Some(id) = emit_connection_id {
-                        emit_status(app_handle, id, "up-to-date", None);
-                    }
-                    return Ok(dest);
+                if let Some(id) = emit_connection_id {
+                    emit_status(app_handle, id, "up-to-date", None);
                 }
+                return Ok(dest);
             }
         }
     }
@@ -557,7 +547,7 @@ async fn ensure_cached_binary(
     if let Some(id) = emit_connection_id {
         emit_status(app_handle, id, "deploying", None);
     }
-    stage_server_binary(app_handle, triple, &dest).await?;
+    download_server_binary(triple, &dest).await?;
     if let Some(id) = emit_connection_id {
         emit_status(app_handle, id, "deployed", None);
     }
@@ -574,14 +564,11 @@ fn deployment_version() -> String {
 }
 
 fn cached_binary_path(app_handle: &AppHandle, triple: &str) -> Result<std::path::PathBuf, String> {
-    let dir = match app_handle.try_state::<std::sync::Arc<crate::core::AppState>>() {
-        Some(state) => state.app_data_dir.join("bin"),
-        None => app_handle
-            .path()
-            .app_data_dir()
-            .map_err(|e| format!("Cannot resolve app data dir: {}", e))?
-            .join("bin"),
-    };
+    let dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Cannot resolve app data dir: {}", e))?
+        .join("bin");
     std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot create server cache dir: {}", e))?;
     Ok(dir.join(asset_filename(triple)))
 }
@@ -616,7 +603,7 @@ fn stale_sibling(path: &std::path::Path) -> Result<std::path::PathBuf, String> {
 
 /// Move `tmp` into place at `dest`, tolerating a `dest` that a running process still holds open.
 ///
-/// Windows refuses to overwrite the image of a running process, so an orphaned maestro-custom-server —
+/// Windows refuses to overwrite the image of a running process, so an orphaned maestro-server —
 /// left by a crash, or by the installer killing the app mid-update — makes the plain rename fail
 /// with `ERROR_ACCESS_DENIED`. That stranded the user on the previous binary, which the updated
 /// app cannot talk to, and no later attempt could recover because the orphan outlives them all.
@@ -637,7 +624,7 @@ async fn install_binary_at(tmp: &std::path::Path, dest: &std::path::Path) -> Res
         discard_temp_download(tmp).await;
         return Err(format!(
             "Failed to install {}: {} (moving the old one aside also failed: {}). \
-             A running maestro-custom-server is still holding it — quit Maestro and try again.",
+             A running maestro-server is still holding it — quit Maestro and try again.",
             dest.display(),
             blocked,
             error
@@ -731,63 +718,53 @@ async fn sweep_stale_binaries(dir: &std::path::Path) {
     }
 }
 
-fn source_server_binary(app: &AppHandle, triple: &str) -> Result<std::path::PathBuf, String> {
+async fn download_server_binary(triple: &str, dest: &std::path::Path) -> Result<(), String> {
+    let version = env!("CARGO_PKG_VERSION");
     let filename = asset_filename(triple);
-    let resource = app
-        .path()
-        .resource_dir()
-        .map_err(|e| e.to_string())?
-        .join("server-assets")
-        .join(&filename);
-    #[cfg(debug_assertions)]
-    let dev_source = std::env::var("MAESTRO_CUSTOM_SERVER_DIR")
-        .ok()
-        .map(|directory| std::path::PathBuf::from(directory).join(&filename));
-    #[cfg(not(debug_assertions))]
-    let dev_source: Option<std::path::PathBuf> = None;
-    let source = if let Some(dev_source) = dev_source {
-        dev_source
-    } else if resource.is_file() {
-        resource
-    } else {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("server-assets")
-            .join(&filename)
-    };
-    if !source.is_file() {
-        return Err(format!("Custom daemon {filename} is not bundled. Run bun run server:bundle; remote targets require their own compiled asset. Official binaries are never downloaded."));
-    }
-    Ok(source)
-}
+    let url = format!(
+        "https://github.com/emdgroup/maestro/releases/download/v{}/{}",
+        version, filename
+    );
 
-async fn stage_server_binary(
-    app: &AppHandle,
-    triple: &str,
-    dest: &std::path::Path,
-) -> Result<(), String> {
-    let source = source_server_binary(app, triple)?;
-    if check_cached_version(&source).await.as_deref() != Some(deployment_version().as_str()) {
-        return Err("Bundled custom daemon version does not match this app".into());
-    }
-    let tmp = dest.with_extension("download-tmp");
-    tokio::fs::copy(&source, &tmp)
+    let response = reqwest::get(&url)
         .await
-        .map_err(|e| format!("Cannot stage custom daemon: {e}"))?;
-    install_binary_at(&tmp, dest).await?;
+        .map_err(|e| format!("Download request failed for {}: {}", url, e))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "Download returned HTTP {} for {}",
+            response.status(),
+            url
+        ));
+    }
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Download read failed: {}", e))?;
+
+    // Write to a temp path then rename atomically to avoid a partial binary at dest.
+    let tmp_path = dest.with_extension("download-tmp");
+    tokio::fs::write(&tmp_path, &bytes)
+        .await
+        .map_err(|e| format!("Failed to write binary to temp file: {}", e))?;
+    install_binary_at(&tmp_path, dest).await?;
+
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         tokio::fs::set_permissions(dest, std::fs::Permissions::from_mode(0o755))
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| format!("Failed to set executable permission: {}", e))?;
     }
+
     Ok(())
 }
 
 fn emit_status(app_handle: &AppHandle, connection_id: i32, status: &str, message: Option<String>) {
     crate::core::emit_or_log(
         app_handle,
-        "maestro-custom-server://deploy-status",
+        "maestro-server://deploy-status",
         DeployStatus {
             connection_id,
             status: status.to_string(),
@@ -820,8 +797,8 @@ mod tests {
     #[tokio::test]
     async fn a_free_destination_is_replaced_outright() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let dest = dir.path().join("maestro-custom-server.exe");
-        let tmp = dir.path().join("maestro-custom-server.download-tmp");
+        let dest = dir.path().join("maestro-server.exe");
+        let tmp = dir.path().join("maestro-server.download-tmp");
         write(&dest, "old");
         write(&tmp, "new");
 
@@ -838,9 +815,9 @@ mod tests {
     #[tokio::test]
     async fn the_sweep_reclaims_aside_copies_and_leaves_the_binary() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let dest = dir.path().join("maestro-custom-server.exe");
+        let dest = dir.path().join("maestro-server.exe");
         let stale = stale_sibling(&dest).expect("sibling name");
-        let partial = dir.path().join("maestro-custom-server.download-tmp");
+        let partial = dir.path().join("maestro-server.download-tmp");
         write(&dest, "live");
         write(&stale, "orphaned");
         write(&partial, "half a download");
@@ -857,7 +834,7 @@ mod tests {
 
     /// The bug this whole path exists for: Windows will not let a running process's image be
     /// overwritten, so the plain rename fails and the binary can never be updated. `ping.exe`
-    /// stands in for an orphaned maestro-custom-server — any live process holding the destination
+    /// stands in for an orphaned maestro-server — any live process holding the destination
     /// reproduces it.
     #[cfg(windows)]
     #[tokio::test]
@@ -872,9 +849,9 @@ mod tests {
         }
 
         let dir = tempfile::tempdir().expect("tempdir");
-        let dest = dir.path().join("maestro-custom-server.exe");
+        let dest = dir.path().join("maestro-server.exe");
         std::fs::copy(&source, &dest).expect("copy ping.exe into place");
-        let tmp = dir.path().join("maestro-custom-server.download-tmp");
+        let tmp = dir.path().join("maestro-server.download-tmp");
         write(&tmp, "the new build");
 
         let mut holder = tokio::process::Command::new(&dest)

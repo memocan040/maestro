@@ -22,9 +22,9 @@ whether one is.
 **The lock, not the runtime file, says whether a daemon is alive.** `<dir>/lock` is held open for
 the daemon's whole life, so the OS releases it on death; `<dir>/runtime.json` carries
 `{port, token, version, protocol_version, pid}` and is left behind by a crash, pointing at a dead
-port. The directory is `<MAESTRO_CUSTOM_DATA_DIR>/daemon/` locally — so a dev build gets its own daemon
+port. The directory is `<MAESTRO_DATA_DIR>/daemon/` locally — so a dev build gets its own daemon
 rather than contending with the installed app — and `~/.maestro/daemon/` on a remote machine,
-passed through `MAESTRO_CUSTOM_DAEMON_DIR`.
+passed through `MAESTRO_DAEMON_DIR`.
 
 A daemon whose `version` or `protocol_version` differs from the connecting client is replaced, but
 only silently when nothing would be lost. `attach` first asks it over a plain-text `STATUS` line,

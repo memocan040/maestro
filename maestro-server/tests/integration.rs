@@ -58,150 +58,13 @@ fn read_msg(reader: &mut impl Read) -> ServerResponse {
     }
 }
 
-struct FixtureServer {
-    child: std::process::Child,
-    stdin: Option<std::process::ChildStdin>,
-    stdout: Option<std::process::ChildStdout>,
-    _data: tempfile::TempDir,
-}
-
-impl std::ops::Deref for FixtureServer {
-    type Target = std::process::Child;
-    fn deref(&self) -> &Self::Target {
-        &self.child
-    }
-}
-impl std::ops::DerefMut for FixtureServer {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.child
-    }
-}
-impl Drop for FixtureServer {
-    fn drop(&mut self) {
-        if self
-            .child
-            .try_wait()
-            .expect("fixture process status")
-            .is_none()
-        {
-            self.child.kill().expect("stop owned fixture server");
-            self.child.wait().expect("wait for owned fixture server");
-        }
-    }
-}
-
-fn spawn_server() -> FixtureServer {
+fn spawn_server() -> std::process::Child {
     spawn_server_with_home(None)
-}
-
-#[test]
-fn successful_spawn_and_load_allow_an_immediate_prompt_without_registration_races() {
-    let directory = tempfile::tempdir().expect("fixture home");
-    let config_dir = directory.path().join(".maestro-custom");
-    std::fs::create_dir(&config_dir).expect("fixture config");
-    let node = which::which("node").expect("Node.js is required for Fake ACP acceptance");
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/acp-agent.mjs");
-    let platform = if cfg!(target_os = "windows") {
-        "windows-x86_64"
-    } else if cfg!(target_os = "macos") {
-        if cfg!(target_arch = "aarch64") {
-            "darwin-aarch64"
-        } else {
-            "darwin-x86_64"
-        }
-    } else if cfg!(target_arch = "aarch64") {
-        "linux-aarch64"
-    } else {
-        "linux-x86_64"
-    };
-    std::fs::write(
-        config_dir.join("custom-agents.json"),
-        serde_json::json!({"agents":[{
-            "id":"fixture-acp", "name":"Deterministic ACP fixture", "distribution":{"binary":{
-                    (platform): {"cmd":node,"args":[fixture]}
-            }}
-        }]})
-        .to_string(),
-    )
-    .expect("fixture custom configuration");
-    let mut child = spawn_server_with_home(Some(directory.path()));
-    let stdin = child.stdin.as_mut().unwrap();
-    let stdout = child.stdout.as_mut().unwrap();
-    do_handshake(stdin, stdout);
-    let cwd = directory.path().to_string_lossy().into_owned();
-    for round in 0..20 {
-        let session_id = format!("immediate-{round}");
-        write_msg(
-            stdin,
-            &ServerRequest::Spawn(SpawnRequest {
-                agent_id: "fixture-acp".into(),
-                session_id: session_id.clone(),
-                cwd: cwd.clone(),
-                additional_directories: Vec::new(),
-                project_path: None,
-                meta: Default::default(),
-            }),
-        );
-        let started = read_msg(stdout);
-        let ServerResponse::SpawnOk(started) = started else {
-            panic!("spawn failed: {started:?}");
-        };
-        write_msg(
-            stdin,
-            &ServerRequest::Prompt(PromptRequest {
-                session_id: session_id.clone(),
-                content: serde_json::json!("Immediate prompt"),
-            }),
-        );
-        loop {
-            match read_msg(stdout) {
-                ServerResponse::SessionUpdate(_) => {}
-                ServerResponse::TurnEnded(ended) => {
-                    assert_eq!(ended.stop_reason, "end_turn");
-                    break;
-                }
-                other => panic!("immediate prompt failed: {other:?}"),
-            }
-        }
-        let resumed = format!("reloaded-{round}");
-        write_msg(
-            stdin,
-            &ServerRequest::SessionLoad(maestro_protocol::SessionLoadRequest {
-                agent_id: "fixture-acp".into(),
-                session_id: resumed.clone(),
-                resume_session_id: started.acp_session_id.unwrap(),
-                cwd: cwd.clone(),
-                additional_directories: Vec::new(),
-                project_path: None,
-                meta: Default::default(),
-            }),
-        );
-        assert!(matches!(read_msg(stdout), ServerResponse::SessionLoadOk(_)));
-        write_msg(
-            stdin,
-            &ServerRequest::Prompt(PromptRequest {
-                session_id: resumed,
-                content: serde_json::json!("Immediate resumed prompt"),
-            }),
-        );
-        loop {
-            match read_msg(stdout) {
-                ServerResponse::SessionUpdate(_) => {}
-                ServerResponse::TurnEnded(ended) => {
-                    assert_eq!(ended.stop_reason, "end_turn");
-                    break;
-                }
-                other => panic!("immediate resumed prompt failed: {other:?}"),
-            }
-        }
-    }
-    drop(child.stdin.take());
-    assert!(child.wait().expect("fixture server exit").success());
 }
 
 /// `home` redirects the home directory the server reads its user configuration from, so a test
 /// can supply a `custom-agents.json` without touching the home of whoever is running the suite.
-fn spawn_server_with_home(home: Option<&std::path::Path>) -> FixtureServer {
+fn spawn_server_with_home(home: Option<&std::path::Path>) -> std::process::Child {
     let bin = server_binary();
     assert!(
         bin.exists(),
@@ -209,28 +72,15 @@ fn spawn_server_with_home(home: Option<&std::path::Path>) -> FixtureServer {
         bin
     );
     let mut command = Command::new(&bin);
-    // HOME must keep real credentials for some probes. Daemon stores are always
-    // isolated independently: the app's data override is not a daemon override.
-    let data = tempfile::Builder::new()
-        .prefix("maestro-wire-")
-        .tempdir()
-        .expect("fixture daemon data");
-    command.env(maestro_protocol::DAEMON_DIR_ENV, data.path());
     if let Some(home) = home {
         command.env("HOME", home).env("USERPROFILE", home);
     }
-    let mut child = command
+    command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .expect("spawn maestro-server");
-    FixtureServer {
-        stdin: child.stdin.take(),
-        stdout: child.stdout.take(),
-        child,
-        _data: data,
-    }
+        .expect("spawn maestro-server")
 }
 
 /// Perform the protocol handshake that the server requires before any other requests.
@@ -535,14 +385,14 @@ fn test_list_agents_returns_ok_response() {
     let _ = child.wait();
 }
 
-/// An agent the user declared in `~/.maestro-custom/custom-agents.json` must reach the picker, and it is
+/// An agent the user declared in `~/.maestro/custom-agents.json` must reach the picker, and it is
 /// only worth asserting against the real binary: the file is read from the home directory of
 /// whichever machine the server runs on, which is the part a unit test cannot stand in for.
 #[test]
 fn test_list_agents_includes_user_defined_custom_agents() {
     let home = tempfile::tempdir().expect("temp home");
-    let config_dir = home.path().join(".maestro-custom");
-    std::fs::create_dir_all(&config_dir).expect("create .maestro-custom");
+    let config_dir = home.path().join(".maestro");
+    std::fs::create_dir_all(&config_dir).expect("create .maestro");
     std::fs::write(
         config_dir.join("custom-agents.json"),
         r#"{
@@ -831,8 +681,8 @@ fn test_fast_request_is_answered_while_a_slow_one_is_outstanding() {
     .join(", ");
 
     let home = tempfile::tempdir().expect("temp home");
-    let config_dir = home.path().join(".maestro-custom");
-    std::fs::create_dir_all(&config_dir).expect("create .maestro-custom");
+    let config_dir = home.path().join(".maestro");
+    std::fs::create_dir_all(&config_dir).expect("create .maestro");
     std::fs::write(
         config_dir.join("custom-agents.json"),
         format!(
@@ -887,18 +737,9 @@ impl Daemon {
 
     /// One window: an `attach` relay, handshaken.
     fn attach(&self) -> std::process::Child {
-        self.attach_with_home(None)
-    }
-
-    fn attach_with_home(&self, home: Option<&std::path::Path>) -> std::process::Child {
-        let mut command = Command::new(server_binary());
-        command
+        let mut child = Command::new(server_binary())
             .arg("attach")
-            .env(maestro_protocol::DAEMON_DIR_ENV, self.dir.path());
-        if let Some(home) = home {
-            command.env("HOME", home).env("USERPROFILE", home);
-        }
-        let mut child = command
+            .env(maestro_protocol::DAEMON_DIR_ENV, self.dir.path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -912,226 +753,8 @@ impl Daemon {
     }
 }
 
-#[test]
-fn orchestration_snapshot_does_not_emit_a_change_event() {
-    let daemon = Daemon::new();
-    let project = tempfile::tempdir().unwrap();
-    let mut child = daemon.attach();
-    write_msg_with_id(
-        child.stdin.as_mut().unwrap(),
-        Some(71),
-        ServerRequest::Orchestration(maestro_protocol::OrchestrationRequest {
-            project_path: project.path().to_string_lossy().into_owned(),
-            operation: serde_json::json!({"action":"snapshot"}),
-        }),
-    );
-    let (id, response) = read_msg_with_id(child.stdout.as_mut().unwrap());
-    assert_eq!(
-        id,
-        Some(71),
-        "A read must not invalidate its own query: {response:?}"
-    );
-    assert!(matches!(response, ServerResponse::OrchestrationOk(_)));
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
-#[test]
-fn two_fake_acp_consultants_answer_without_starting_unrelated_members() {
-    use serde_json::json;
-    let home = tempfile::tempdir().unwrap();
-    let daemon = Daemon::new();
-    let path = home.path().to_string_lossy().replace('\\', "/");
-    let node = which::which("node").unwrap();
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/acp-agent.mjs");
-    let platform = if cfg!(windows) {
-        "windows-x86_64"
-    } else if cfg!(target_os = "macos") {
-        if cfg!(target_arch = "aarch64") {
-            "darwin-aarch64"
-        } else {
-            "darwin-x86_64"
-        }
-    } else {
-        "linux-x86_64"
-    };
-    std::fs::create_dir(home.path().join(".maestro-custom")).unwrap();
-    std::fs::write(home.path().join(".maestro-custom/custom-agents.json"),json!({"agents":[{"id":"chat-fixture","name":"Fake ACP chat","distribution":{"binary":{(platform):{"cmd":node,"args":[fixture]}}}}]}).to_string()).unwrap();
-    assert!(Command::new("git")
-        .args(["init", "-b", "main", &path])
-        .output()
-        .unwrap()
-        .status
-        .success());
-    assert!(Command::new("git")
-        .args([
-            "-C",
-            &path,
-            "-c",
-            "user.name=Test",
-            "-c",
-            "user.email=test@example.invalid",
-            "-c",
-            "commit.gpgsign=false",
-            "commit",
-            "--allow-empty",
-            "-m",
-            "Fixture"
-        ])
-        .output()
-        .unwrap()
-        .status
-        .success());
-    std::fs::create_dir(home.path().join(".maestro")).unwrap();
-    let profiles=["lead","a","b","unrelated"].map(|id|json!({"id":id,"name":id,"role":if id=="lead"{"Planner"}else{"Coder"},"agent_id":"chat-fixture"}));
-    std::fs::write(
-        home.path().join(".maestro/profiles.json"),
-        json!({"profiles":profiles}).to_string(),
-    )
-    .unwrap();
-    let mut child = daemon.attach_with_home(Some(home.path()));
-    let mut id = 0;
-    let rpc = |child: &mut std::process::Child, id: u64, op: serde_json::Value| {
-        write_msg_with_id(
-            child.stdin.as_mut().unwrap(),
-            Some(id),
-            ServerRequest::Orchestration(maestro_protocol::OrchestrationRequest {
-                project_path: path.clone(),
-                operation: op,
-            }),
-        );
-        loop {
-            let (reply, response) = read_msg_with_id(child.stdout.as_mut().unwrap());
-            if reply == Some(id) {
-                let ServerResponse::OrchestrationOk(value) = response else {
-                    panic!("{response:?}")
-                };
-                return value;
-            }
-        }
-    };
-    for member in ["lead", "a", "b", "unrelated"] {
-        id += 1;
-        rpc(
-            &mut child,
-            id,
-            json!({"action":"save_member","member":{"id":member,"profile_id":member,"name":member,"strengths":"","enabled":true,"orchestrator":member=="lead","worker":member!="lead","reviewer":false,"max_sessions":2,"priority":0}}),
-        );
-    }
-    id += 1;
-    let snap = rpc(
-        &mut child,
-        id,
-        json!({"action":"create_feature","title":"Fake chat","goal":"Bounded architecture question","acceptance":["Answers"],"orchestrator_member":"lead","allowed_members":["a","b","unrelated"],"max_parallel":2,"base_branch":"main"}),
-    );
-    let feature = snap["features"][0]["id"].as_str().unwrap();
-    id += 1;
-    let snap = rpc(
-        &mut child,
-        id,
-        json!({"action":"start_discussion","feature_id":feature,"goal":"Choose one API","member_ids":["a","b"],"dedupe_key":"fake-discussion"}),
-    );
-    let tasks = snap["discussions"][0]["task_ids"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|v| v.as_i64().unwrap() as i32)
-        .collect::<Vec<_>>();
-    let mut replies = 0;
-    loop {
-        let response = read_msg(child.stdout.as_mut().unwrap());
-        match response {
-            ServerResponse::TurnEnded(ended) => {
-                assert_eq!(ended.stop_reason, "end_turn");
-                replies += 1;
-            }
-            ServerResponse::TaskSessionStarted(started) => {
-                assert!(tasks.contains(&started.task_id));
-                assert_eq!(started.agent_id, "chat-fixture");
-            }
-            ServerResponse::TasksChanged(_) => {
-                if replies >= 2 {
-                    break;
-                }
-            }
-            ServerResponse::Error(error) => panic!("Fake consultation failed: {}", error.message),
-            _ => {}
-        }
-    }
-    id += 1;
-    let snap = rpc(&mut child, id, json!({"action":"snapshot"}));
-    assert_eq!(snap["discussions"][0]["state"], "AwaitingDecision");
-    assert_eq!(
-        snap["messages"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|m| m["body"] == "MAESTRO_CUSTOM_ACP_OK")
-            .count(),
-        2
-    );
-    assert!(snap["features"][0]["task_ids"]
-        .as_array()
-        .unwrap()
-        .is_empty());
-    assert_eq!(snap["features"][0]["status"], "Planning");
-    let _ = child.kill();
-    let _ = child.wait();
-    let mut next = daemon.attach_with_home(Some(home.path()));
-    id += 1;
-    let restored = rpc(&mut next, id, json!({"action":"snapshot"}));
-    assert_eq!(restored["messages"], snap["messages"]);
-    assert_eq!(restored["discussions"], snap["discussions"]);
-    let _ = next.kill();
-    let _ = next.wait();
-    daemon.shutdown();
-    let mut restarted = daemon.attach_with_home(Some(home.path()));
-    id += 1;
-    let recovered = rpc(&mut restarted, id, json!({"action":"snapshot"}));
-    assert_eq!(recovered["messages"], snap["messages"]);
-    assert_eq!(recovered["discussions"], snap["discussions"]);
-    let orchestrator = recovered["features"][0]["orchestrator_task"]
-        .as_i64()
-        .unwrap();
-    id += 1;
-    rpc(
-        &mut restarted,
-        id,
-        json!({"action":"message","feature_id":feature,"recipient_task":null,"kind":"question","body":"Report the stored feature status","dedupe_key":"first-chat"}),
-    );
-    loop {
-        match read_msg(restarted.stdout.as_mut().unwrap()) {
-            ServerResponse::TaskSessionStarted(started) => {
-                assert_eq!(started.task_id as i64, orchestrator)
-            }
-            ServerResponse::TurnEnded(_) => {}
-            ServerResponse::TasksChanged(_) => {
-                id += 1;
-                let state = rpc(&mut restarted, id, json!({"action":"snapshot"}));
-                if state["messages"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|m| m["sender_task"] == orchestrator && m["kind"] == "answer")
-                {
-                    assert_eq!(state["features"][0]["status"], "Planning");
-                    assert!(state["features"][0]["task_ids"]
-                        .as_array()
-                        .unwrap()
-                        .is_empty());
-                    break;
-                }
-            }
-            ServerResponse::Error(error) => panic!("First chat failed: {}", error.message),
-            _ => {}
-        }
-    }
-    let _ = restarted.kill();
-    let _ = restarted.wait();
-}
-
-impl Daemon {
-    fn shutdown(&self) {
+impl Drop for Daemon {
+    fn drop(&mut self) {
         let Ok(body) = std::fs::read(self.dir.path().join("runtime.json")) else {
             return;
         };
@@ -1143,12 +766,6 @@ impl Daemon {
         }
         // The lock is released on exit, which is what lets the directory go.
         std::thread::sleep(std::time::Duration::from_millis(500));
-    }
-}
-
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        self.shutdown();
     }
 }
 
@@ -1455,137 +1072,4 @@ fn test_import_project_over_the_wire() {
 
     let _ = a.kill();
     let _ = a.wait();
-}
-
-/// Uses the resident daemon and real git; no provider calls or fake completion flags.
-#[test]
-fn test_feature_plan_over_the_wire_is_idempotent_and_isolates_git() {
-    use serde_json::{json, Value};
-    fn rpc(
-        child: &mut std::process::Child,
-        path: &str,
-        id: u64,
-        operation: Value,
-    ) -> ServerResponse {
-        write_msg_with_id(
-            child.stdin.as_mut().unwrap(),
-            Some(id),
-            ServerRequest::Orchestration(maestro_protocol::OrchestrationRequest {
-                project_path: path.into(),
-                operation,
-            }),
-        );
-        loop {
-            let (reply_id, response) = read_msg_with_id(child.stdout.as_mut().unwrap());
-            if reply_id == Some(id) {
-                return response;
-            }
-        }
-    }
-    fn value(reply: ServerResponse) -> Value {
-        match reply {
-            ServerResponse::OrchestrationOk(value) => value,
-            other => panic!("expected orchestration reply, got {other:?}"),
-        }
-    }
-    let daemon = Daemon::new();
-    let project = tempfile::tempdir().unwrap();
-    let path = project.path().to_string_lossy().replace('\\', "/");
-    let git = |args: &[&str]| {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(project.path())
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "git failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8_lossy(&output.stdout).trim().to_string()
-    };
-    git(&["init", "-b", "main"]);
-    git(&[
-        "-c",
-        "user.name=Test",
-        "-c",
-        "user.email=test@example.test",
-        "commit",
-        "--allow-empty",
-        "-m",
-        "Initial",
-    ]);
-    let original_main = git(&["rev-parse", "main"]);
-    std::fs::create_dir(project.path().join(".maestro")).unwrap();
-    std::fs::write(project.path().join(".maestro/profiles.json"), json!({"profiles":[{"id":"lead","name":"Lead","role":"Planner","agent_id":"uninstalled-fixture"},{"id":"worker","name":"Worker","role":"Coder","agent_id":"uninstalled-fixture"}]}).to_string()).unwrap();
-    let mut child = daemon.attach();
-    for (n, id, lead) in [(1, "lead", true), (2, "worker", false)] {
-        value(rpc(
-            &mut child,
-            &path,
-            n,
-            json!({"action":"save_member","member":{"id":id,"profile_id":id,"name":id,"strengths":"","enabled":true,"orchestrator":lead,"worker":!lead,"reviewer":false,"max_sessions":2,"priority":0}}),
-        ));
-    }
-    let created = value(rpc(
-        &mut child,
-        &path,
-        3,
-        json!({"action":"create_feature","title":"Wire feature","goal":"Verify integration","acceptance":["Passed"],"orchestrator_member":"lead","allowed_members":["worker"],"max_parallel":2,"base_branch":"main"}),
-    ));
-    let feature_id = created["features"][0]["id"].as_str().unwrap();
-    let plan=(0..3).map(|i| json!({"key":format!("t{i}"),"title":format!("Task {i}"),"instructions":"Test","acceptance":["Pass"],"member_id":"worker","depends_on":if i==2 {vec!["t0"]} else {vec![]}})).collect::<Vec<_>>();
-    value(rpc(
-        &mut child,
-        &path,
-        4,
-        json!({"action":"submit_plan","feature_id":feature_id,"tasks":plan}),
-    ));
-    let approved = value(rpc(
-        &mut child,
-        &path,
-        5,
-        json!({"action":"approve_plan","feature_id":feature_id}),
-    ));
-    let repeated = value(rpc(
-        &mut child,
-        &path,
-        6,
-        json!({"action":"approve_plan","feature_id":feature_id}),
-    ));
-    assert_eq!(
-        approved["features"][0]["task_ids"],
-        repeated["features"][0]["task_ids"]
-    );
-    assert_eq!(
-        approved["features"][0]["task_ids"]
-            .as_array()
-            .unwrap()
-            .len(),
-        3
-    );
-    let branch = approved["features"][0]["integration_branch"]
-        .as_str()
-        .unwrap();
-    assert_eq!(git(&["rev-parse", branch]), original_main);
-    assert_eq!(git(&["rev-parse", "main"]), original_main);
-    let task = approved["features"][0]["task_ids"][0].as_i64().unwrap();
-    assert!(matches!(
-        rpc(
-            &mut child,
-            &path,
-            7,
-            json!({"action":"record_integration","task_id":task,"commit_sha":"0".repeat(40)})
-        ),
-        ServerResponse::Error(_)
-    ));
-    value(rpc(
-        &mut child,
-        &path,
-        8,
-        json!({"action":"control","feature_id":feature_id,"command":"cancel"}),
-    ));
-    let _ = child.kill();
-    let _ = child.wait();
 }

@@ -373,9 +373,6 @@ pub fn add_relationship(
     to_task_id: i32,
     relationship_type: &str,
 ) -> Result<TaskRelationship, String> {
-    if relationship_type == "blocks" {
-        super::dependencies::validate(conn, project_path, from_task_id, to_task_id)?;
-    }
     let now = Utc::now().to_rfc3339();
     conn.execute(
         "INSERT INTO task_relationships (project_path, from_task_id, to_task_id,

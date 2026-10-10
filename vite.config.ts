@@ -56,9 +56,7 @@ export default defineConfig(async () => ({
       // the app mid-worktree-creation. Relative to this file, not a `**/.maestro/**` glob: that
       // matched every path of a dev server started inside a worktree and killed its HMR.
       ignored: (file) =>
-        ["src-tauri", ".maestro", "target"].includes(
-          path.relative(projectRoot, file).split(path.sep)[0],
-        ),
+        ["src-tauri", ".maestro"].includes(path.relative(projectRoot, file).split(path.sep)[0]),
     },
   },
 }));

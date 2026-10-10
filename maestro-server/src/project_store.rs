@@ -81,10 +81,6 @@ const MIGRATIONS: &[&str] = &[
     V7_SESSION_TURNS,
     crate::task_store::transition::V8_TASK_CLAIMED_FROM,
     crate::task_store::project_import::V9_IMPORT_SOURCES,
-    crate::orchestration::V10_ORCHESTRATION,
-    crate::orchestration::V11_FEATURE_INTEGRATIONS,
-    crate::orchestration::chat::V12_TEAM_CHAT,
-    crate::orchestration::chat::V13_CHAT_STARTS,
 ];
 
 /// Open, or create, the daemon's project database.

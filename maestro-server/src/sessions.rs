@@ -175,16 +175,6 @@ pub struct AgentConnection {
 }
 
 impl AgentConnection {
-    pub fn shutdown(self) -> tokio::task::JoinHandle<()> {
-        let Self {
-            _shutdown_tx,
-            connection_task,
-            ..
-        } = self;
-        drop(_shutdown_tx);
-        connection_task
-    }
-
     pub fn new(
         connection: acp::ConnectionTo<acp::Agent>,
         router: Arc<SessionRouter>,

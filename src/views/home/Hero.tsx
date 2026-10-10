@@ -18,9 +18,7 @@ export function Hero({ working, needYou, toReview }: HeroProps) {
       <div className="flex items-center gap-4">
         <img src="/maestro-logo.png" alt="" className="home-logo size-16 object-contain" />
         <div>
-          <h1 className="text-[28px] leading-none font-semibold tracking-[-0.025em]">
-            Maestro Custom
-          </h1>
+          <h1 className="text-[28px] leading-none font-semibold tracking-[-0.025em]">Maestro</h1>
           <div className="mt-1.5 text-xs text-muted-foreground">Conduct your agents in concert</div>
         </div>
       </div>

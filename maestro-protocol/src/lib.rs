@@ -1,5 +1,3 @@
-mod orchestration;
-pub use orchestration::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -8,7 +6,7 @@ pub mod exec;
 
 pub const MSG_LEN_SIZE: usize = 4;
 pub const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024; // 16 MB — reject oversized payloads (T-41-01)
-pub const PROTOCOL_VERSION: u32 = 16;
+pub const PROTOCOL_VERSION: u32 = 13;
 /// Canonical error string returned by spawn when the agent requires authentication.
 /// Both Rust (session_ops) and TypeScript frontends check for this exact value.
 ///
@@ -255,7 +253,6 @@ pub enum ServerRequest {
     ListTaskAttachments(TaskRef),
     AddTaskAttachment(AddTaskAttachmentRequest),
     DeleteTaskAttachment(DeleteTaskAttachmentRequest),
-    Orchestration(OrchestrationRequest),
     ListTaskRelationships(TaskRef),
     AddTaskRelationship(AddTaskRelationshipRequest),
     DeleteTaskRelationship(DeleteTaskRelationshipRequest),
@@ -345,12 +342,12 @@ pub const MCP_SERVER_NAME: &str = "maestro";
 /// Directory holding the resident server's lock and runtime files.
 ///
 /// Set by the host for a local connection, so a development build pointed at its own
-/// `MAESTRO_CUSTOM_DATA_DIR` gets its own daemon rather than contending with the installed app. Unset on
+/// `MAESTRO_DATA_DIR` gets its own daemon rather than contending with the installed app. Unset on
 /// a remote machine, where there is no such directory and the daemon falls back to
 /// `~/.maestro/daemon`.
-pub const DAEMON_DIR_ENV: &str = "MAESTRO_CUSTOM_DAEMON_DIR";
+pub const DAEMON_DIR_ENV: &str = "MAESTRO_DAEMON_DIR";
 /// Fallback daemon directory, relative to the home directory of the user the server runs as.
-pub const DAEMON_DIR_DEFAULT: &str = ".maestro-custom/daemon";
+pub const DAEMON_DIR_DEFAULT: &str = ".maestro/daemon";
 /// Held open by the running daemon for as long as it lives.
 ///
 /// The lock, not the runtime file, is what answers "is a daemon alive here": a killed process
@@ -1441,12 +1438,6 @@ pub struct ReviewComment {
 
 /// A project, for the requests and pushes that need nothing else.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct OrchestrationRequest {
-    pub project_path: String,
-    pub operation: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProjectRef {
     pub project_path: String,
 }
@@ -2369,7 +2360,6 @@ pub enum ServerResponse {
     ListTaskAttachmentsOk(TaskAttachmentList),
     AddTaskAttachmentOk(TaskAttachment),
     DeleteTaskAttachmentOk,
-    OrchestrationOk(serde_json::Value),
     ListTaskRelationshipsOk(TaskRelationshipList),
     AddTaskRelationshipOk(TaskRelationship),
     DeleteTaskRelationshipOk,
@@ -2515,7 +2505,6 @@ impl ServerResponse {
             | Self::ListTaskAttachmentsOk(_)
             | Self::AddTaskAttachmentOk(_)
             | Self::DeleteTaskAttachmentOk
-            | Self::OrchestrationOk(_)
             | Self::ListTaskRelationshipsOk(_)
             | Self::AddTaskRelationshipOk(_)
             | Self::DeleteTaskRelationshipOk

@@ -10,9 +10,9 @@ use maestro_protocol::AutostartMethod;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-const UNIT: &str = "maestro-custom-server.service";
+const UNIT: &str = "maestro-server.service";
 /// Ends the crontab line this module owns, so it can be found and removed again.
-const CRON_MARK: &str = "# maestro-custom-server autostart";
+const CRON_MARK: &str = "# maestro-server autostart";
 
 pub(crate) fn supported() -> bool {
     cfg!(target_os = "linux")
@@ -128,7 +128,7 @@ fn unit_file(exe: &Path) -> String {
         .replace('%', "%%")
         .replace('$', "$$");
     format!(
-        "[Unit]\nDescription=Maestro Custom background server\n\n\
+        "[Unit]\nDescription=Maestro background server\n\n\
          [Service]\nExecStart=/usr/bin/env bash -lc \"{command}\"\n\n\
          [Install]\nWantedBy=default.target\n"
     )

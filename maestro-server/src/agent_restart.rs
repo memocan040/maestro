@@ -8,35 +8,19 @@ use crate::session::{load_session_on_connection, pre_initialize_agent};
 use crate::sessions::{AgentConnectionHandle, SessionMap, SharedAgentConnections};
 
 pub(crate) async fn handle_agent_restart(
-    dead_connection_id: String,
+    dead_agent_id: String,
     agent_connections: &SharedAgentConnections,
     sessions: &mut SessionMap,
     agents_with_spawn: &[agent::registry::DiscoveredAgentWithSpawn],
     project_store: Option<&crate::project_store::Store>,
     stdout: &crate::ClientOut,
 ) {
-    let dead_router = agent_connections
-        .lock()
-        .await
-        .get(&dead_connection_id)
-        .map(|c| Arc::clone(&c.router));
-    let dead_agent_id = sessions
-        .values()
-        .find(|s| {
-            s.cleanup.as_ref().is_some_and(|c| {
-                dead_router
-                    .as_ref()
-                    .is_some_and(|r| Arc::ptr_eq(r, &c.router))
-            })
-        })
-        .map(|s| s.agent_id.clone())
-        .unwrap_or_else(|| dead_connection_id.clone());
     send_diag("warn", format!("[agent] {dead_agent_id:?} connection dead"));
 
     let is_dead = agent_connections
         .lock()
         .await
-        .get(&dead_connection_id)
+        .get(&dead_agent_id)
         .map(|conn| conn.connection_task.is_finished())
         .unwrap_or(false);
     if !is_dead {
@@ -46,13 +30,7 @@ pub(crate) async fn handle_agent_restart(
     // Fast-path sessions (shared connection, have cleanup) are candidates for restore.
     let to_restore: Vec<(String, String, String, Vec<String>)> = sessions
         .iter()
-        .filter(|(_, s)| {
-            s.cleanup.as_ref().is_some_and(|c| {
-                dead_router
-                    .as_ref()
-                    .is_some_and(|r| Arc::ptr_eq(r, &c.router))
-            })
-        })
+        .filter(|(_, s)| s.agent_id == dead_agent_id)
         .filter_map(|(sid, s)| {
             s.cleanup.as_ref().map(|c| {
                 (
@@ -112,7 +90,7 @@ pub(crate) async fn handle_agent_restart(
         }
     }
 
-    agent_connections.lock().await.remove(&dead_connection_id);
+    agent_connections.lock().await.remove(&dead_agent_id);
 
     if to_restore.is_empty() {
         return;
@@ -174,7 +152,7 @@ pub(crate) async fn handle_agent_restart(
     agent_connections
         .lock()
         .await
-        .insert(dead_connection_id, new_conn);
+        .insert(dead_agent_id, new_conn);
 }
 
 /// The agent under a task's session died mid-phase: fail the task if an agent was still working

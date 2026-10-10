@@ -53,7 +53,7 @@ pub(crate) fn attach_command(server_path: &str, replace: bool) -> String {
 /// Where the local daemon keeps its lock and runtime file.
 ///
 /// Under the app's own data directory rather than the home directory, so a development build
-/// pointed at its own `MAESTRO_CUSTOM_DATA_DIR` gets a separate daemon instead of contending with the
+/// pointed at its own `MAESTRO_DATA_DIR` gets a separate daemon instead of contending with the
 /// installed app over one. Remote transports pass nothing and take the home-relative default,
 /// because there is no equivalent directory on the other machine.
 pub(crate) fn local_daemon_dir(app_state: &crate::core::AppState) -> std::path::PathBuf {

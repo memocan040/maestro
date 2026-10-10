@@ -133,24 +133,7 @@ pub fn load_registry() -> AcpRegistry {
 }
 
 fn discover_agent(entry: &AgentRegistryEntry, custom: bool) -> Option<DiscoveredAgentWithSpawn> {
-    let (mut spawn_cmd, spawn_args, spawn_env, spawn_deps) = resolve_spawn(&entry.distribution)?;
-    // Only a versioned, explicitly installed cache is used; never download executables during discovery.
-    if entry.distribution.npx.is_none()
-        && entry.distribution.binary.is_some()
-        && !std::path::Path::new(&spawn_cmd).is_absolute()
-    {
-        if let Ok(home) = crate::tool_config::home_dir() {
-            let cached = home
-                .join(".maestro-custom")
-                .join("agent-binaries")
-                .join(&entry.id)
-                .join(&entry.version)
-                .join(&spawn_cmd);
-            if cached.is_file() {
-                spawn_cmd = cached.to_string_lossy().into_owned();
-            }
-        }
-    }
+    let (spawn_cmd, spawn_args, spawn_env, spawn_deps) = resolve_spawn(&entry.distribution)?;
     Some(DiscoveredAgentWithSpawn {
         id: entry.id.clone(),
         name: entry.name.clone(),
@@ -173,7 +156,7 @@ pub fn discover_agents(registry: &AcpRegistry) -> Vec<DiscoveredAgentWithSpawn> 
 
 fn custom_agents_path() -> Result<std::path::PathBuf, String> {
     Ok(crate::tool_config::home_dir()?
-        .join(".maestro-custom")
+        .join(".maestro")
         .join("custom-agents.json"))
 }
 
@@ -238,29 +221,6 @@ fn merge_custom_agents(agents: &mut Vec<DiscoveredAgentWithSpawn>, custom: &[Age
 #[cfg(test)]
 mod tests {
     use maestro_protocol::{AgentDistribution, AgentRegistryEntry, NpxDistribution};
-
-    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-    #[test]
-    fn antigravity_uses_the_official_acp_executable_not_the_agy_cli() {
-        let registry = super::load_registry();
-        let entry = registry
-            .agents
-            .iter()
-            .find(|a| a.id == "antigravity-acp")
-            .unwrap();
-        let agent = super::discover_agent(entry, false).unwrap();
-        assert_eq!(
-            std::path::Path::new(&agent.spawn_cmd).file_name().unwrap(),
-            "agy_acp_server.exe"
-        );
-        assert!(
-            entry.distribution.binary.as_ref().unwrap()["windows-x86_64"]
-                .archive
-                .as_ref()
-                .unwrap()
-                .starts_with("https://dl.google.com/")
-        );
-    }
 
     fn custom_entry(id: &str, name: &str) -> AgentRegistryEntry {
         AgentRegistryEntry {

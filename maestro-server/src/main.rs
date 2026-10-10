@@ -29,7 +29,6 @@ mod mcp_config;
 mod mcp_gateway;
 mod mcp_stdio;
 mod mcp_store;
-mod orchestration;
 mod pipeline_settings;
 mod profiles;
 mod project_locks;
@@ -564,8 +563,6 @@ async fn run_server(
             planned,
         );
     }
-    let mut orchestration_rx = orchestration::notifications();
-    orchestration::notify();
     let mut task_slots = 0;
     let auth_terminals: Arc<
         tokio::sync::Mutex<std::collections::HashMap<String, AuthTerminalState>>,
@@ -681,41 +678,6 @@ async fn run_server(
                 continue;
             }
 
-            _ = orchestration_rx.recv() => {
-                if let Some(store) = project_store.as_ref() {
-                    project_store::report(orchestration::chat::reconcile(&*store.lock().await));
-                    let pending = orchestration::chat::pending(&*store.lock().await).unwrap_or_default();
-                    for (project_path, task_id) in pending {
-                        let req=maestro_protocol::StartTaskRequest { project_path:project_path.clone(),task_id,role:maestro_protocol::AgentRole::Planner,feedback:None,unattended:true,respect_capacity:true,agent_id:None };
-                        let mut pushes=Vec::new();
-                        let begun=task_runner::begin(&mut *store.lock().await,&req,pipeline_settings::taken_slots(&sessions),&agents_with_spawn,&mut pushes);
-                        for push in pushes {helpers::broadcast(&stdout,push).await;}
-                        match begun {
-                            Ok(task_runner::Begun::Claimed(claimed))=> {
-                                project_store::report(orchestration::chat::claim_start(&*store.lock().await,&project_path,task_id));
-                                let reply=client_sink::ClientSink::for_client(&stdout,u64::MAX).await;
-                                tokio::spawn(Box::pin(task_runner::launch(task_runner::Launcher{store:Arc::clone(store),agent_connections:Arc::clone(&agent_connections),settle_tx:settle_tx.clone(),reply},claimed)));
-                            }
-                            Ok(task_runner::Begun::Deferred)=>{},
-                            Err(e)=> {
-                                if e.to_string().contains("parallelism limit") || e.to_string().contains("session limit") {continue;}
-                                let conn=store.lock().await;
-                                project_store::report(orchestration::chat::failed_start(&conn,&project_path,task_id,&e.to_string()));
-                                project_store::report(orchestration::chat::reconcile(&conn));
-                                send_diag("warn",format!("[consultation] start blocked: {e}"));
-                            }
-                        }
-                    }
-                    match orchestration::pump(store, &sessions).await {
-                        Ok(close) => for sid in close {
-                            dispatch::cancel_session(&sid, &mut sessions, &mut pending_host_tools, &agent_connections,
-                                project_store.as_ref(), automation_store.as_ref(), &stdout).await;
-                        },
-                        Err(e) => send_diag("warn", format!("[orchestration] delivery: {e}")),
-                    }
-                }
-                continue;
-            }
             settled = settle_rx.recv() => {
                 if let Some(settled) = settled {
                     Box::pin(dispatch::settle(
@@ -729,7 +691,6 @@ async fn run_server(
                     ))
                     .await;
                 }
-                orchestration::notify();
                 continue;
             }
 
@@ -850,7 +811,6 @@ async fn run_server(
 
             ended = turn_rx.recv() => {
                 let Some(ended) = ended else { continue };
-                orchestration::notify();
                 // A task session the daemon prompted before adopting it: held until it is.
                 let ended = if sessions.contains_key(&ended.session_id) {
                     ended

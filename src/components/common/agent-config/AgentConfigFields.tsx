@@ -32,7 +32,6 @@ export function AgentConfigFields({
   projectPath,
   connection,
   readOnly,
-  probeAvailable = true,
   onChange,
 }: {
   value: AgentConfigValue;
@@ -44,7 +43,6 @@ export function AgentConfigFields({
   connection: ConnectionKey;
   /** Whether the mode filled in for an empty field should be one that cannot write. */
   readOnly: boolean;
-  probeAvailable?: boolean;
   /** `commit` persists the patch straight away; callers that batch leave it to their own save. */
   onChange: (patch: Partial<AgentConfigValue>, commit?: boolean) => void;
 }) {
@@ -56,7 +54,7 @@ export function AgentConfigFields({
   // An agent this machine does not have cannot answer, and every field below clears what the probe
   // does not confirm — so probing one would wipe a profile written on a machine that has it. The
   // agent itself is still shown as `(not found)`, which is the honest thing to say about it.
-  const probeEnabled = probeAvailable && !!value.agent_id && !agentMissing;
+  const probeEnabled = !!value.agent_id && !agentMissing;
 
   const {
     data: config,
@@ -85,7 +83,7 @@ export function AgentConfigFields({
   // disabled probe reports `isLoading: false` with no data for ever — both look exactly like "the
   // agent offers nothing", which is what the resets act on. Reading the settled states directly is
   // the difference between a re-probe and a wipe.
-  const probeSettled = probeEnabled && probeAnswered;
+  const probeSettled = probeEnabled && (probeAnswered || probeFailed);
 
   // The models a probe of *this agent* reported, kept across the re-probe that changing the model
   // sets off. Retaining them is not showing a stale answer: the model list is a property of the
@@ -125,8 +123,11 @@ export function AgentConfigFields({
     readOnly,
   );
 
-  // Only a successful capability response can invalidate stored selections.
-  // Unreachable or unauthenticated providers preserve the profile for another machine or login.
+  // No field ever shows a value the agent did not offer. A stored value this machine cannot
+  // confirm is treated the same as one it confirmed absent, because the two are indistinguishable
+  // from here and the alternative — labelling it `(not offered)` — put a selection on screen that
+  // the spawn then silently ignored. The cost is real and deliberate: an unreachable agent clears
+  // the fields naming it.
   //
   // Each write makes its own condition false, so none of these re-fire.
   useEffect(() => {

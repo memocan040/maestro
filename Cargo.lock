@@ -3737,7 +3737,6 @@ dependencies = [
  "base64 0.23.1",
  "serde",
  "serde_json",
- "specta",
  "tokio",
 ]
 
@@ -3775,7 +3774,6 @@ dependencies = [
  "tokio-util",
  "uuid",
  "which",
- "windows-sys 0.61.2",
  "winreg 0.56.0",
 ]
 

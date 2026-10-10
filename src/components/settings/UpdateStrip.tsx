@@ -28,7 +28,7 @@ export function UpdateStrip({ padEnd = false }: { padEnd?: boolean }) {
   const saveAppSettings = useSaveSettings({ successToast: false });
   const [appVersion, setAppVersion] = useState<string>("…");
 
-  const autoUpdate = false;
+  const autoUpdate = appSettings?.auto_update ?? false;
 
   useEffect(() => {
     getVersion()
@@ -68,7 +68,7 @@ export function UpdateStrip({ padEnd = false }: { padEnd?: boolean }) {
       <img src={appIconUrl} alt="" className="size-6 shrink-0 rounded-md" />
 
       <div className="flex min-w-0 items-baseline gap-2">
-        <span className="text-sm font-semibold">Maestro Custom</span>
+        <span className="text-sm font-semibold">Maestro</span>
         <span className="truncate text-xs text-muted-foreground">
           {status.phase === "available" ? (
             <>
@@ -150,7 +150,7 @@ export function UpdateStrip({ padEnd = false }: { padEnd?: boolean }) {
               <button
                 type="button"
                 onClick={() => checkForUpdates(autoUpdate)}
-                disabled={true}
+                disabled={isChecking}
                 className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
                 aria-label="Check for updates"
               />
@@ -158,7 +158,7 @@ export function UpdateStrip({ padEnd = false }: { padEnd?: boolean }) {
           >
             <RefreshCw className={cn("size-3.5", isChecking && "animate-spin")} />
           </TooltipTrigger>
-          <TooltipContent side="bottom">Manual updates only in Maestro Custom</TooltipContent>
+          <TooltipContent side="bottom">Check for updates</TooltipContent>
         </Tooltip>
 
         <Popover>
@@ -175,12 +175,12 @@ export function UpdateStrip({ padEnd = false }: { padEnd?: boolean }) {
                 <p className="text-[11px] text-muted-foreground">
                   {isPackageInstall
                     ? "Requires the AppImage install"
-                    : "Disabled: install verified Custom releases manually"}
+                    : "Download and install new versions on launch"}
                 </p>
               </div>
               <Switch
-                checked={false}
-                disabled={true}
+                checked={autoUpdate}
+                disabled={isPackageInstall}
                 onCheckedChange={handleAutoUpdateToggle}
                 className={cn(
                   "data-unchecked:border-border/50 data-unchecked:bg-muted",

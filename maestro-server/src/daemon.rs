@@ -43,8 +43,8 @@ const STATUS_WAIT: Duration = Duration::from_secs(2);
 
 /// Where the lock and runtime files live.
 ///
-/// The host sets `MAESTRO_CUSTOM_DAEMON_DIR` for a local connection so a development build pointed at its
-/// own `MAESTRO_CUSTOM_DATA_DIR` gets its own daemon instead of contending with the installed app. On a
+/// The host sets `MAESTRO_DAEMON_DIR` for a local connection so a development build pointed at its
+/// own `MAESTRO_DATA_DIR` gets its own daemon instead of contending with the installed app. On a
 /// remote machine there is no such directory and the home-relative default applies, which means
 /// one daemon per machine whichever build reached it.
 pub(crate) fn dir() -> Result<PathBuf, String> {

@@ -4,7 +4,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useShortcuts } from "@/hooks/useShortcuts";
 import { cn } from "@/lib/utils";
 import { AgentMonitor } from "@/components/execution/agent-monitor/AgentMonitor";
-import { FeaturePanel } from "@/views/kanban/FeaturePanel";
 import { SidebarProvider } from "@/ui/sidebar";
 import { SessionHistoryModal } from "@/components/execution/session-history/SessionHistoryModal";
 import {
@@ -487,11 +486,6 @@ export const AgentsView: React.FC<AgentsViewProps> = ({ projectId, repoPath, con
         </div>
       </div>
 
-      {projectId !== undefined && projectId > 0 && (
-        <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b">
-          <FeaturePanel projectId={projectId} />
-        </div>
-      )}
       {/* Agent monitor */}
       <div className="flex-1 min-h-0 relative">
         <AgentMonitor

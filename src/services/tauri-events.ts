@@ -1,4 +1,3 @@
-import { orchestrationKeys } from "@/services/orchestration.service";
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
@@ -53,7 +52,6 @@ export function useServerEventSync(projectId: number | undefined) {
       "tasks-changed",
       (payload) => {
         void queryClient.invalidateQueries({ queryKey: taskQueryKeys.lists() });
-        void queryClient.invalidateQueries({ queryKey: orchestrationKeys.base });
         const id = payload.project_id ?? null;
         for (const kind of ["relationships", "instructions", "attachments", "commitMessage"]) {
           const queryKey = [...taskQueryKeys.base, kind];

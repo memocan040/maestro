@@ -32,15 +32,9 @@ type TauriGlobal = {
   };
 };
 
-after(async () => {
-  if (process.env.MAESTRO_E2E_SCREENSHOT) {
-    await browser.saveScreenshot(process.env.MAESTRO_E2E_SCREENSHOT);
-  }
-});
-
 describe("app launch", () => {
-  it("opens a window titled Maestro Custom", async () => {
-    await expect(browser).toHaveTitle("Maestro Custom");
+  it("opens a window titled Maestro", async () => {
+    await expect(browser).toHaveTitle("Maestro");
   });
 
   it("renders Home rather than an error boundary", async () => {

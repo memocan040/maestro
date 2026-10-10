@@ -21,7 +21,7 @@ pub enum KeychainOutcome<T> {
     FileFallback(T),
 }
 
-const SERVICE: &str = "maestro-custom.ticketing";
+const SERVICE: &str = "maestro.ticketing";
 
 /// UTF-16 units per keychain entry. Windows caps a credential at 2560 bytes and `keyring` stores
 /// it as UTF-16, so 1280 is the ceiling; an OAuth access token is often longer.

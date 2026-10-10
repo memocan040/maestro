@@ -127,13 +127,7 @@ async function probeAgentConfig(
 
       // An agent that never answers must not leave the panel spinning for ever. The session is
       // closed in `finally` regardless of which way this settles.
-      const timer = setTimeout(
-        () =>
-          finish(() =>
-            spawned ? resolve(config) : reject(new Error("ACP session initialization timed out")),
-          ),
-        30_000,
-      );
+      const timer = setTimeout(() => finish(() => resolve(config)), 30_000);
 
       void listen<{ available_models: AgentModel[]; current_model_id: string }>(
         `acp://session-models/${sessionId}`,

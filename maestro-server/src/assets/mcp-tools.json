@@ -3,7 +3,7 @@
   "tools": [
     {
       "name": "canvas_create",
-      "description": "Open a canvas surface in Maestro's side panel. A surface is an HTML document you write \u2014 HTML, CSS and JavaScript \u2014 rendered in a sandboxed frame beside the conversation. Always the first call for a new surfaceId, before canvas_data or canvas_update. Reuse one surfaceId for a whole answer; a new surface per tool call produces disconnected panels. Never narrate these calls to the user \u2014 they see the rendered surface, not the machinery.\n\nWRITING THE DOCUMENT\n- Give every meaningful element an `id`. Controls with an id answer canvas_await, and elements with an id are the ones the user can annotate and point you at.\n- theme `maestro` (the default) gives you Tailwind compiled in the frame with Maestro's own tokens: `bg-card`, `text-muted-foreground`, `border-border`, `rounded-lg`, `bg-primary`, `text-destructive`, `bg-chart-1`. Writing shadcn-flavoured Tailwind produces a surface that looks like the rest of the app \u2014 `<div class='rounded-lg border bg-card p-4 shadow-sm'>` is a Maestro card.\n- theme `tailwind` is Tailwind with its own stock tokens, for mocking up a project that uses Tailwind. theme `none` injects nothing, for a mockup carrying the target project's own CSS.\n- Assets are `https:` URLs or `data:` URIs. Relative paths and `file://` do NOT resolve \u2014 the frame has no base URL and no access to the disk. Icons are inline `<svg>`, not image files.\n- Charts: inline `<svg>` for bars, lines and sparklines, which always works. For real axes, scales and tooltips add a CDN library \u2014 and guard it, because the user may be offline:\n  `<script src='https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.iife.min.js' onerror=\"document.getElementById('chart').textContent='Chart library unavailable offline'\"></script>`\n- `window.maestro` is available in the frame: `maestro.emit(id, kind, value)` answers a pending canvas_await from your own code, `maestro.record(id, value)` notes a value without answering, `maestro.onData(cb)` reads what canvas_data pushed, and `maestro.fetch(url, init)` performs a request from the host machine against the origins you declared in `sources`.\n- A control your own script handles should either call `preventDefault()` or carry `data-maestro-ignore`. Otherwise Maestro also reports the click, and a button that only redraws something in the frame consumes the canvas_await you were holding for a real answer.\n- Anything the frame fails to load or run \u2014 a blocked asset, an offline CDN, a thrown exception \u2014 comes back to you on the result of your next canvas call on this surface.",
+      "description": "Open a canvas surface in Maestro's side panel. A surface is an HTML document you write — HTML, CSS and JavaScript — rendered in a sandboxed frame beside the conversation. Always the first call for a new surfaceId, before canvas_data or canvas_update. Reuse one surfaceId for a whole answer; a new surface per tool call produces disconnected panels. Never narrate these calls to the user — they see the rendered surface, not the machinery.\n\nWRITING THE DOCUMENT\n- Give every meaningful element an `id`. Controls with an id answer canvas_await, and elements with an id are the ones the user can annotate and point you at.\n- theme `maestro` (the default) gives you Tailwind compiled in the frame with Maestro's own tokens: `bg-card`, `text-muted-foreground`, `border-border`, `rounded-lg`, `bg-primary`, `text-destructive`, `bg-chart-1`. Writing shadcn-flavoured Tailwind produces a surface that looks like the rest of the app — `<div class='rounded-lg border bg-card p-4 shadow-sm'>` is a Maestro card.\n- theme `tailwind` is Tailwind with its own stock tokens, for mocking up a project that uses Tailwind. theme `none` injects nothing, for a mockup carrying the target project's own CSS.\n- Assets are `https:` URLs or `data:` URIs. Relative paths and `file://` do NOT resolve — the frame has no base URL and no access to the disk. Icons are inline `<svg>`, not image files.\n- Charts: inline `<svg>` for bars, lines and sparklines, which always works. For real axes, scales and tooltips add a CDN library — and guard it, because the user may be offline:\n  `<script src='https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.iife.min.js' onerror=\"document.getElementById('chart').textContent='Chart library unavailable offline'\"></script>`\n- `window.maestro` is available in the frame: `maestro.emit(id, kind, value)` answers a pending canvas_await from your own code, `maestro.record(id, value)` notes a value without answering, `maestro.onData(cb)` reads what canvas_data pushed, and `maestro.fetch(url, init)` performs a request from the host machine against the origins you declared in `sources`.\n- A control your own script handles should either call `preventDefault()` or carry `data-maestro-ignore`. Otherwise Maestro also reports the click, and a button that only redraws something in the frame consumes the canvas_await you were holding for a real answer.\n- Anything the frame fails to load or run — a blocked asset, an offline CDN, a thrown exception — comes back to you on the result of your next canvas call on this surface.",
       "inputSchema": {
         "type": "object",
         "required": ["surfaceId", "title", "html"],
@@ -18,7 +18,7 @@
           },
           "html": {
             "type": "string",
-            "description": "The document. A full `<html>` page or a fragment \u2014 Maestro prepends its own head either way."
+            "description": "The document. A full `<html>` page or a fragment — Maestro prepends its own head either way."
           },
           "theme": {
             "type": "string",
@@ -37,7 +37,7 @@
     },
     {
       "name": "canvas_update",
-      "description": "Change a surface. With `target`, the element with that id is replaced in the live frame: no reload, so scroll position, focus, canvas bitmaps and anything the user typed survive \u2014 prefer this for content. Without `target`, the whole document is replaced and the frame reloads, losing all of that and re-running your script from the top.\n\nThe replacement is assigned as `outerHTML`, so the element itself is a new node: listeners your script bound to it are gone, and a `<script>` inside the replacement never runs. A control your own JavaScript drives has to be rewired, which means a document-level listener that survives the swap \u2014 or a full replace. Static content, rows, values and labels are what `target` is for.\n\nElement ids are scoped to their surface, so two forms may both use `branch` without colliding. Neither `title` nor `sources` can be changed after canvas_create.",
+      "description": "Change a surface. With `target`, the element with that id is replaced in the live frame: no reload, so scroll position, focus, canvas bitmaps and anything the user typed survive — prefer this for content. Without `target`, the whole document is replaced and the frame reloads, losing all of that and re-running your script from the top.\n\nThe replacement is assigned as `outerHTML`, so the element itself is a new node: listeners your script bound to it are gone, and a `<script>` inside the replacement never runs. A control your own JavaScript drives has to be rewired, which means a document-level listener that survives the swap — or a full replace. Static content, rows, values and labels are what `target` is for.\n\nElement ids are scoped to their surface, so two forms may both use `branch` without colliding. Neither `title` nor `sources` can be changed after canvas_create.",
       "inputSchema": {
         "type": "object",
         "required": ["surfaceId", "html"],
@@ -47,7 +47,7 @@
           },
           "html": {
             "type": "string",
-            "description": "With `target`, the replacement for that element \u2014 include the element itself, with its id, or you lose the anchor. Without `target`, the whole document."
+            "description": "With `target`, the replacement for that element — include the element itself, with its id, or you lose the anchor. Without `target`, the whole document."
           },
           "target": {
             "type": "string",
@@ -58,7 +58,7 @@
     },
     {
       "name": "canvas_data",
-      "description": "Store data on a surface at a JSON Pointer path. The document subscribes with `maestro.onData(function (data) { ... })`, reading `data['/rows']`. Use it for values that change while the surface stays the same \u2014 a table's rows, a chart's series \u2014 so a refresh is one small call instead of a document rewrite.\n\nSubscribe; do not read `maestro.data` while your script is initialising. It is empty then \u2014 the bag arrives just after the document loads, and `onData` fires at that moment with everything in it.\n\nThe bag outlives the document. A full canvas_update reloads the frame, and `onData` then delivers every value you have ever pushed as though it were new \u2014 so a handler that acts on what it receives (appending a row, playing a move) must be able to tell a replay from a change. Push a counter alongside the value and ignore anything not newer than what the document has already seen.",
+      "description": "Store data on a surface at a JSON Pointer path. The document subscribes with `maestro.onData(function (data) { ... })`, reading `data['/rows']`. Use it for values that change while the surface stays the same — a table's rows, a chart's series — so a refresh is one small call instead of a document rewrite.\n\nSubscribe; do not read `maestro.data` while your script is initialising. It is empty then — the bag arrives just after the document loads, and `onData` fires at that moment with everything in it.\n\nThe bag outlives the document. A full canvas_update reloads the frame, and `onData` then delivers every value you have ever pushed as though it were new — so a handler that acts on what it receives (appending a row, playing a move) must be able to tell a replay from a change. Push a counter alongside the value and ignore anything not newer than what the document has already seen.",
       "inputSchema": {
         "type": "object",
         "required": ["surfaceId", "path", "value"],
@@ -97,7 +97,7 @@
     },
     {
       "name": "create_task",
-      "description": "Create a Maestro task in the Planning column of the current project. Use when the user asks for work to be tracked, or when you find follow-up work worth recording. The task is created immediately \u2014 say what you created and quote the id.",
+      "description": "Create a Maestro task in the Planning column of the current project. Use when the user asks for work to be tracked, or when you find follow-up work worth recording. The task is created immediately — say what you created and quote the id.",
       "inputSchema": {
         "type": "object",
         "required": ["title"],
@@ -126,7 +126,7 @@
     },
     {
       "name": "get_task",
-      "description": "Read a Maestro task: its description, status, labels, and the outcome thread of what previous sessions concluded about it. Omit `id` for the task this session was started for \u2014 the prompt you were given is a paraphrase of a card, and the card is where the user put the detail, the acceptance criteria and the history. Read it before assuming what the work is. The thread carries the last 20 entries, newest kept.",
+      "description": "Read a Maestro task: its description, status, labels, and the outcome thread of what previous sessions concluded about it. Omit `id` for the task this session was started for — the prompt you were given is a paraphrase of a card, and the card is where the user put the detail, the acceptance criteria and the history. Read it before assuming what the work is. The thread carries the last 20 entries, newest kept.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -139,7 +139,7 @@
     },
     {
       "name": "update_task",
-      "description": "Change a Maestro task. Only the fields you pass are touched; omit `id` for the task this session is working on.\n\nMoving `status` is the same move as the user dragging the card, so make it when the work has actually reached that state \u2014 `Review` when you are finished and want it looked at, not when you expect to be finished. The user is watching the board, so a wrong move is visible and misleading rather than harmless.",
+      "description": "Change a Maestro task. Only the fields you pass are touched; omit `id` for the task this session is working on.\n\nMoving `status` is the same move as the user dragging the card, so make it when the work has actually reached that state — `Review` when you are finished and want it looked at, not when you expect to be finished. The user is watching the board, so a wrong move is visible and misleading rather than harmless.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -617,178 +617,6 @@
             "description": "The prompt's id from list_prompts, `project-<n>` or `shared-<n>`."
           }
         }
-      }
-    },
-    {
-      "name": "get_feature_context",
-      "description": "Read the current feature/team state. Prefer this compact state over repeating repository analysis. Available only to project task sessions.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {},
-        "additionalProperties": false
-      }
-    },
-    {
-      "name": "submit_feature_plan",
-      "description": "As the feature orchestrator, submit an acyclic plan for human approval. Each task names an allowed worker and concrete acceptance criteria. Approval and integration are user actions; this tool never starts a worker.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "feature_id": {
-            "type": "string"
-          },
-          "tasks": {
-            "type": "array",
-            "minItems": 1,
-            "maxItems": 100,
-            "items": {
-              "type": "object",
-              "properties": {
-                "key": {
-                  "type": "string"
-                },
-                "title": {
-                  "type": "string"
-                },
-                "instructions": {
-                  "type": "string"
-                },
-                "acceptance": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "member_id": {
-                  "type": "string",
-                  "description": "Manual: stable enabled worker member ID. Automatic: empty string; the daemon resolves and persists a suitable allowed worker at human plan approval."
-                },
-                "depends_on": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                }
-              },
-              "required": ["key", "title", "instructions", "acceptance", "member_id", "depends_on"],
-              "additionalProperties": false
-            }
-          }
-        },
-        "required": ["feature_id", "tasks"],
-        "additionalProperties": false
-      }
-    },
-    {
-      "name": "send_feature_message",
-      "description": "Send a concrete question, blocker, progress report or answer. Workers send only to their orchestrator (recipient_task null); the orchestrator may reply to its workers. Reuse dedupe_key when retrying the same logical message. Messages persist and are queued while the recipient is active.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "feature_id": {
-            "type": "string"
-          },
-          "recipient_task": {
-            "type": ["integer", "null"]
-          },
-          "kind": {
-            "type": "string",
-            "enum": [
-              "question",
-              "answer",
-              "progress",
-              "blocked",
-              "review_ready",
-              "review_feedback",
-              "instruction",
-              "decision",
-              "note",
-              "team_instruction"
-            ]
-          },
-          "body": {
-            "type": "string"
-          },
-          "dedupe_key": {
-            "type": "string"
-          }
-        },
-        "required": ["feature_id", "kind", "body", "dedupe_key"],
-        "additionalProperties": false
-      }
-    },
-    {
-      "name": "acknowledge_feature_message",
-      "description": "Acknowledge a delivered message after processing it. Only the recipient can acknowledge. Repeated acknowledgments are safe.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "message_id": {
-            "type": "string"
-          }
-        },
-        "required": ["message_id"],
-        "additionalProperties": false
-      }
-    },
-    {
-      "name": "start_feature_discussion",
-      "description": "Only the feature orchestrator may start a targeted read-only consultation with allowed team members. Give a concrete goal; defaults allow two additional agents, two rounds, no nested discussions. Results return to this orchestrator. Never use this for ordinary progress or display updates.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "feature_id": {
-            "type": "string"
-          },
-          "goal": {
-            "type": "string"
-          },
-          "member_ids": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "dedupe_key": {
-            "type": "string"
-          }
-        },
-        "required": ["feature_id", "goal", "member_ids", "dedupe_key"],
-        "additionalProperties": false
-      }
-    },
-    {
-      "name": "advance_feature_discussion",
-      "description": "Only the orchestrator may ask a specific second-round follow-up after all current answers. Reuses existing consultant sessions. Server enforces the persisted round limit. If exhausted, close with a decision or escalate to the user.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "discussion_id": {
-            "type": "string"
-          },
-          "question": {
-            "type": "string"
-          }
-        },
-        "required": ["discussion_id", "question"],
-        "additionalProperties": false
-      }
-    },
-    {
-      "name": "close_feature_discussion",
-      "description": "End a discussion early with a concise recorded decision or user escalation. This never approves a plan, worker result, integration or merge.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "discussion_id": {
-            "type": "string"
-          },
-          "summary": {
-            "type": "string"
-          }
-        },
-        "required": ["discussion_id", "summary"],
-        "additionalProperties": false
       }
     }
   ]

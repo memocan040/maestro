@@ -22,7 +22,7 @@ pub(crate) fn home_dir() -> Result<PathBuf, String> {
 }
 
 fn config_path() -> Result<PathBuf, String> {
-    Ok(home_dir()?.join(".maestro-custom").join("tools.json"))
+    Ok(home_dir()?.join(".maestro").join("tools.json"))
 }
 
 fn read() -> Result<ToolConfig, String> {

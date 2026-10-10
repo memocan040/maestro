@@ -1,13 +1,12 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { createConnection } from "node:net";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 
 /**
  * E2E against the real binary: real Rust backend, real SQLite, real webview.
  *
  * Run it with `bun run test:e2e`, which builds the binary first. See tests/e2e/README.md —
- * this needs a display and the platform webview runtime.
+ * this cannot run headless in a container, it needs a display and WebKitGTK.
  */
 
 /**
@@ -16,21 +15,16 @@ import { basename, dirname, join, resolve } from "node:path";
  * itself, so pointing at src-tauri/target would fail with a bare ENOENT.
  */
 const APP_BINARY =
-  process.env.MAESTRO_E2E_BINARY ??
-  join(
-    process.cwd(),
-    "target",
-    "release",
-    process.platform === "win32" ? "maestro.exe" : "maestro",
-  );
+  process.env.MAESTRO_E2E_BINARY ?? join(process.cwd(), "target", "release", "maestro");
 
 /**
  * The app opens whatever database lives in its app-data directory. Without this the suite would
  * run against — and migrate, and write to — the real Maestro install of whoever ran it. Point
  * the OS-specific data directory at a throwaway so every run starts from an empty schema.
  *
- * MAESTRO_CUSTOM_DATA_DIR explicitly isolates the Custom app and its local daemon on every
- * platform. OS directory overrides also isolate components using their platform defaults.
+ * Linux and Windows resolve that directory from the environment, so this works. macOS derives it
+ * from $HOME and overriding that breaks keychain access, so on macOS the suite still uses the
+ * real directory — see tests/e2e/README.md before running it there.
  */
 /**
  * This module is evaluated once in the launcher and again in every worker, so minting a
@@ -40,34 +34,18 @@ const APP_BINARY =
  */
 function isolatedAppDataDir(): string {
   const existing = process.env.MAESTRO_E2E_DATA_DIR;
-  if (existing) {
-    const path = resolve(existing);
-    if (dirname(path) !== resolve(tmpdir()) || !basename(path).startsWith("maestro-e2e-")) {
-      throw new Error(
-        "MAESTRO_E2E_DATA_DIR must be a maestro-e2e-* directory directly inside TEMP",
-      );
-    }
-    return path;
-  }
+  if (existing) return existing;
   const created = mkdtempSync(join(tmpdir(), "maestro-e2e-"));
   process.env.MAESTRO_E2E_DATA_DIR = created;
   return created;
 }
 
 const appDataDir = isolatedAppDataDir();
-const driverProvider =
-  process.env.MAESTRO_E2E_DRIVER_PROVIDER ??
-  (process.platform === "win32" ? "external" : "embedded");
-if (driverProvider !== "external" && driverProvider !== "embedded") {
-  throw new Error("MAESTRO_E2E_DRIVER_PROVIDER must be external or embedded");
-}
 
-const isolatedEnv: Record<string, string> = {
-  MAESTRO_CUSTOM_DATA_DIR: appDataDir,
-  ...(process.platform === "win32"
+const isolatedEnv: Record<string, string> =
+  process.platform === "win32"
     ? { APPDATA: appDataDir, LOCALAPPDATA: appDataDir }
-    : { XDG_DATA_HOME: appDataDir, XDG_CONFIG_HOME: appDataDir }),
-};
+    : { XDG_DATA_HOME: appDataDir, XDG_CONFIG_HOME: appDataDir };
 
 // The app inherits its environment from the driver, which inherits it from this process.
 Object.assign(process.env, isolatedEnv);
@@ -94,9 +72,6 @@ export const config: WebdriverIO.Config = {
       "@wdio/tauri-service",
       {
         appBinaryPath: APP_BINARY,
-        driverProvider,
-        autoInstallTauriDriver: driverProvider === "external",
-        autoDownloadEdgeDriver: true,
         env: isolatedEnv,
         // Surface Rust panics and console errors in the WDIO output — with no logging in the
         // Rust code, a crash is otherwise a silent, unexplained session failure.
@@ -121,33 +96,7 @@ export const config: WebdriverIO.Config = {
    */
   waitforTimeout: 15_000,
 
-  async onComplete() {
-    // The resident daemon intentionally outlives its window. Stop only the daemon
-    // authenticated by this run's isolated runtime file before removing SQLite files.
-    const runtimeFile = join(appDataDir, "daemon", "runtime.json");
-    if (existsSync(runtimeFile)) {
-      const runtime = JSON.parse(readFileSync(runtimeFile, "utf8")) as {
-        port: number;
-        token: string;
-      };
-      await new Promise<void>((done) => {
-        const socket = createConnection({ host: "127.0.0.1", port: runtime.port });
-        socket.once("connect", () => socket.end(`${runtime.token}\nSHUTDOWN\n`));
-        socket.setTimeout(3_000, () => socket.destroy());
-        socket.once("error", () => socket.destroy());
-        socket.once("close", () => done());
-      });
-      for (let attempt = 0; existsSync(runtimeFile) && attempt < 50; attempt++) {
-        await new Promise((done) => setTimeout(done, 100));
-      }
-      if (existsSync(runtimeFile)) throw new Error("The isolated test daemon did not stop");
-    }
-    try {
-      rmSync(appDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (process.platform !== "win32" || (code !== "EPERM" && code !== "EBUSY")) throw error;
-      console.warn(`Windows retained temporary test data after daemon shutdown: ${appDataDir}`);
-    }
+  onComplete() {
+    rmSync(appDataDir, { recursive: true, force: true });
   },
 };

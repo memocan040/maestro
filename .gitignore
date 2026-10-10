@@ -54,7 +54,3 @@ website/.vitepress/cache/
 # The home page video lives on the `website-media` release, not in git; `bun run media` in
 # website/ downloads it
 website/public/maestro.mp4
-
-# Custom daemon staged for Tauri bundling
-src-tauri/server-assets/*
-!src-tauri/server-assets/.gitkeep

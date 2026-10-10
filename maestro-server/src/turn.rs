@@ -85,43 +85,9 @@ pub fn classify_verdict(reply: &str) -> ReviewVerdict {
     }
 }
 
-/// Feature results need a readable verdict; an unknown reply is never evidence
-/// that an independent review passed, even though legacy tasks go to the user.
-pub fn explicit_verdict(reply: &str) -> Option<ReviewVerdict> {
-    let heading = reply.lines().map(str::trim).find(|line| !line.is_empty())?;
-    let heading = heading
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || c.is_whitespace())
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_ascii_uppercase();
-    match heading.as_str() {
-        "APPROVED" => Some(ReviewVerdict::Approved),
-        "CHANGES REQUESTED" => Some(ReviewVerdict::ChangesRequested),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod verdict_tests {
     use super::*;
-
-    #[test]
-    fn unreadable_feature_reviews_are_not_approvals() {
-        for reply in ["", "Looks fine", "Summary\nAPPROVED", "APPROVED perhaps"] {
-            assert_eq!(explicit_verdict(reply), None);
-        }
-        assert_eq!(
-            explicit_verdict("**APPROVED**\nTests passed"),
-            Some(ReviewVerdict::Approved)
-        );
-        assert_eq!(
-            explicit_verdict("## Changes requested:\nFix null check"),
-            Some(ReviewVerdict::ChangesRequested)
-        );
-    }
 
     #[test]
     fn reads_the_verdict_off_the_first_line() {

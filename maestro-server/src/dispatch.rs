@@ -114,34 +114,6 @@ pub(crate) fn runs_under_key(sessions: &SessionMap, agent_id: &str, acp_session_
     })
 }
 
-async fn retire_connection(
-    connections: &SharedAgentConnections,
-    router: &Arc<crate::sessions::SessionRouter>,
-) {
-    let retired = {
-        let mut pool = connections.lock().await;
-        let key = pool
-            .iter()
-            .find(|(_, c)| Arc::ptr_eq(&c.router, router))
-            .map(|(key, _)| key.clone());
-        key.and_then(|key| pool.remove(&key))
-    };
-    if let Some(connection) = retired {
-        let mut task = connection.shutdown();
-        if tokio::time::timeout(std::time::Duration::from_secs(5), &mut task)
-            .await
-            .is_err()
-        {
-            task.abort();
-            let _ = task.await;
-            send_diag(
-                "warn",
-                "Agent transport did not stop gracefully; process tree was terminated",
-            );
-        }
-    }
-}
-
 /// Close a session already taken out of the map: through its command loop, so the agent keeps a
 /// transcript `session/load` can replay, and by aborting it when the loop cannot take the command.
 pub(crate) async fn close_session(
@@ -151,6 +123,7 @@ pub(crate) async fn close_session(
     automation_store: Option<&crate::automation_runner::Store>,
     stdout: &crate::ClientOut,
 ) {
+    let session_agent_id = session.agent_id.clone();
     // A run's workspace is settled once its session is closed, whoever closed it. The sweep only
     // closes sessions nobody is attached to, so with a window open this is the only close there is.
     let settle = automation_store.map(|store| {
@@ -184,7 +157,10 @@ pub(crate) async fn close_session(
                     c.router.unregister(&c.acp_session_id).await;
                 }
                 if c.router.is_empty().await {
-                    retire_connection(&agent_connections_cancel, &c.router).await;
+                    agent_connections_cancel
+                        .lock()
+                        .await
+                        .remove(&session_agent_id);
                 }
             }
             // After the close has run, never alongside it: the agent holds files open under the
@@ -199,7 +175,7 @@ pub(crate) async fn close_session(
         if let Some(c) = session.cleanup {
             c.router.unregister(&c.acp_session_id).await;
             if c.router.is_empty().await {
-                retire_connection(agent_connections, &c.router).await;
+                agent_connections.lock().await.remove(&session_agent_id);
             }
         }
         if let Some(settle) = settle {
@@ -250,7 +226,6 @@ pub(crate) async fn cancel_session(
 /// The loop's share of a request answered off it: what the slow part found, and the sink the
 /// answer goes out on. Only what touches state the loop owns comes back here.
 pub(crate) enum Settle {
-    SessionStarted(Box<StartedSession>),
     Detected(
         maestro_protocol::DetectInstalledAgentsResponse,
         crate::ClientOut,
@@ -272,13 +247,6 @@ pub(crate) enum Settle {
     },
 }
 
-pub(crate) struct StartedSession {
-    pub session_id: String,
-    pub session: ActiveSession,
-    pub response: ServerResponse,
-    pub stdout: crate::ClientOut,
-}
-
 pub(crate) type SettleTx = tokio::sync::mpsc::UnboundedSender<Settle>;
 
 /// The loop's settle channel, for code that runs inside an agent connection and is handed none.
@@ -296,35 +264,6 @@ pub(crate) async fn settle(
     pending_host_tools: &mut crate::mcp_gateway::PendingHostTools,
 ) {
     let (stdout, response) = match settle {
-        Settle::SessionStarted(started) => {
-            let StartedSession {
-                session_id,
-                session,
-                response,
-                stdout,
-            } = *started;
-            let registered = crate::register_started_session(
-                session_id.clone(),
-                session,
-                sessions,
-                agent_connections,
-                project_store,
-                automation_store,
-                &stdout,
-            )
-            .await;
-            (
-                stdout,
-                if registered {
-                    response
-                } else {
-                    ServerResponse::Error(ErrorResponse {
-                        message: "Session was closed while starting".into(),
-                        session_id: Some(session_id),
-                    })
-                },
-            )
-        }
         Settle::TaskStarted(started) => {
             crate::task_runner::adopt(
                 *started,
@@ -989,7 +928,7 @@ pub(crate) async fn dispatch_message(
             let requested_at = chrono::Utc::now();
             let stdout_task = Arc::clone(stdout);
             let agent_connections_task = Arc::clone(agent_connections);
-            let settle_tx = settle_tx.clone();
+            let spawn_result_tx = spawn_result_tx.clone();
             // Offload the blocking ACP operations to a separate task so the main loop
             // stays responsive to PermitResponse and other messages.
             tokio::spawn(async move {
@@ -1055,15 +994,11 @@ pub(crate) async fn dispatch_message(
                             can_reload: result.supports_session_load,
                             requested_at,
                         });
-                if let Err(error) =
-                    settle_tx.send(Settle::SessionStarted(Box::new(StartedSession {
-                        session_id: req.session_id,
-                        session: result.session,
-                        response: ServerResponse::SpawnOk(response),
-                        stdout: stdout_task,
-                    })))
+                if send_response(&stdout_task, &ServerResponse::SpawnOk(response))
+                    .await
+                    .is_ok()
                 {
-                    send_diag("warn", format!("[session] registration failed: {error}"));
+                    let _ = spawn_result_tx.send((req.session_id, result.session)).await;
                 }
             });
         }
@@ -1130,42 +1065,6 @@ pub(crate) async fn dispatch_message(
             }
         }
 
-        ServerRequest::Orchestration(req) => {
-            let read_only = req.operation["action"] == "snapshot";
-            let Some(store) = project_store.cloned() else {
-                send_or_return!(
-                    send_response(
-                        stdout,
-                        &error_response(crate::project_store::UNAVAILABLE.into())
-                    )
-                    .await
-                );
-                return true;
-            };
-            let out = Arc::clone(stdout);
-            tokio::spawn(async move {
-                let path = crate::automations::canonical_project_path(&req.project_path);
-                let response =
-                    match crate::orchestration::request(&store, &path, req.operation, None).await {
-                        Ok(value) => {
-                            if !read_only {
-                                crate::helpers::broadcast(
-                                    &out,
-                                    ServerResponse::TasksChanged(maestro_protocol::ProjectRef {
-                                        project_path: path,
-                                    }),
-                                )
-                                .await;
-                            }
-                            ServerResponse::OrchestrationOk(value)
-                        }
-                        Err(e) => error_response(e),
-                    };
-                if let Err(e) = send_response(&out, &response).await {
-                    crate::send_diag("warn", format!("[orchestration] reply failed: {e}"));
-                }
-            });
-        }
         ServerRequest::Cancel(req) => {
             // A window closing a task's session ends the stage it was running. Only here: a newer
             // session superseding it goes through `cancel_session` alone.
@@ -1305,7 +1204,7 @@ pub(crate) async fn dispatch_message(
                 req,
                 agent_connections,
                 agents_with_spawn,
-                settle_tx,
+                spawn_result_tx,
                 stdout,
             )
             .await;

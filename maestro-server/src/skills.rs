@@ -41,7 +41,7 @@ pub(crate) async fn install(skills: Vec<SkillFile>) -> Result<bool, String> {
 }
 
 fn stage_root(home: &Path) -> PathBuf {
-    home.join(".maestro-custom").join("skills")
+    home.join(".maestro").join("skills")
 }
 
 /// Write the skill files under `stage`, returning whether an install still has to run.
@@ -226,11 +226,11 @@ struct SkillEntry {
 }
 
 fn library_root(home: &Path) -> PathBuf {
-    home.join(".maestro-custom").join("skill-library")
+    home.join(".maestro").join("skill-library")
 }
 
 fn state_path(home: &Path) -> PathBuf {
-    home.join(".maestro-custom").join("skills.json")
+    home.join(".maestro").join("skills.json")
 }
 
 fn read_state(home: &Path) -> Result<SkillState, String> {
@@ -435,7 +435,7 @@ pub(crate) async fn apply(req: ApplySkillRequest) -> Result<(), String> {
 /// so it installs at project scope into a scratch directory, for one agent, copied rather than
 /// symlinked, and that copy is moved into the library.
 async fn fetch(home: &Path, source: &str, name: &str, dir: &Path) -> Result<(), String> {
-    let scratch = home.join(".maestro-custom").join("skill-fetch");
+    let scratch = home.join(".maestro").join("skill-fetch");
     remove_dir_if_present(&scratch)?;
     std::fs::create_dir_all(&scratch)
         .map_err(|error| format!("Failed to create {}: {error}", scratch.display()))?;

@@ -17,7 +17,9 @@ use crate::session::{
     load_session_on_connection, session_close_on_connection, session_delete_on_connection,
     session_list_on_connection,
 };
-use crate::sessions::{AgentConnectionHandle, ProjectBinding, SessionMap, SharedAgentConnections};
+use crate::sessions::{
+    ActiveSession, AgentConnectionHandle, ProjectBinding, SessionMap, SharedAgentConnections,
+};
 
 use crate::ClientOut as Stdout;
 
@@ -99,7 +101,7 @@ pub(crate) async fn load(
     req: maestro_protocol::SessionLoadRequest,
     agent_connections: &SharedAgentConnections,
     agents_with_spawn: &[agent::registry::DiscoveredAgentWithSpawn],
-    settle_tx: &crate::dispatch::SettleTx,
+    spawn_result_tx: &tokio::sync::mpsc::Sender<(String, ActiveSession)>,
     stdout: &Stdout,
 ) -> bool {
     // Reported here in the agent's place, since neither reaches the agent. Named for the session,
@@ -138,7 +140,7 @@ pub(crate) async fn load(
     let requested_at = chrono::Utc::now();
     let stdout_task = Arc::clone(stdout);
     let agent_connections_task = Arc::clone(agent_connections);
-    let settle_tx = settle_tx.clone();
+    let spawn_result_tx = spawn_result_tx.clone();
     // Offloaded so the dispatch loop keeps answering while the agent starts and replays the
     // session, which can take as long as the transcript is.
     tokio::spawn(async move {
@@ -187,25 +189,22 @@ pub(crate) async fn load(
                     requested_at,
                 });
                 let session_id = req.session_id.clone();
-                // The routing map must exist before the host can send its next prompt.
-                if let Err(error) = settle_tx.send(crate::dispatch::Settle::SessionStarted(
-                    Box::new(crate::dispatch::StartedSession {
-                        session_id,
-                        session,
-                        stdout: stdout_task,
-                        response: ServerResponse::SessionLoadOk(SessionLoadOkResponse {
-                            session_id: req.session_id,
-                            models,
-                            modes,
-                            prompt_capabilities: Some(prompt_caps),
-                            config_options,
-                        }),
+                // Handed to the dispatch loop only once the host has been told the session
+                // exists, so a registered session is always one the host knows about.
+                if send_response(
+                    &stdout_task,
+                    &ServerResponse::SessionLoadOk(SessionLoadOkResponse {
+                        session_id: req.session_id,
+                        models,
+                        modes,
+                        prompt_capabilities: Some(prompt_caps),
+                        config_options,
                     }),
-                )) {
-                    crate::send_diag(
-                        "warn",
-                        format!("[session] load registration failed: {error}"),
-                    );
+                )
+                .await
+                .is_ok()
+                {
+                    spawn_result_tx.send((session_id, session)).await.ok();
                 }
             }
         }

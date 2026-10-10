@@ -201,30 +201,6 @@ pub(crate) async fn resolve(
     let mut pushes = Vec::new();
     // A window-loaded session's binding holds the app's spelling of the path.
     let project_path = &crate::automations::canonical_project_path(project_path);
-    {
-        let conn = store.lock().await;
-        match crate::orchestration::record_turn(
-            &conn,
-            project_path,
-            task_id,
-            facts.closing_message.as_deref().unwrap_or(""),
-            stop_reason == "error",
-        ) {
-            Ok(true) => {
-                return (
-                    None,
-                    vec![ServerResponse::TasksChanged(maestro_protocol::ProjectRef {
-                        project_path: project_path.into(),
-                    })],
-                )
-            }
-            Ok(false) => {}
-            Err(e) => {
-                send_diag("warn", format!("[orchestration] turn record: {e}"));
-                return (None, pushes);
-            }
-        }
-    }
     let is_git_repo = crate::worktree::is_repository(project_path).await;
     let (task, worktree) = {
         let conn = store.lock().await;

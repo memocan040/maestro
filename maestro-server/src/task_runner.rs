@@ -213,17 +213,6 @@ pub(crate) fn begin(
     pushes: &mut Vec<ServerResponse>,
 ) -> Result<Begun, NotBegun> {
     let project_path = crate::automations::canonical_project_path(&request.project_path);
-    let consultant =
-        crate::orchestration::chat::is_consultation(conn, &project_path, request.task_id)?;
-    let coordinator =
-        crate::orchestration::orchestrator_for(conn, &project_path, request.task_id)?.is_some();
-    if (consultant || coordinator) && request.role != AgentRole::Planner {
-        return Err(
-            "Feature coordination may only run its read-only Planner role"
-                .to_string()
-                .into(),
-        );
-    }
     let task = crate::task_store::get(conn, &project_path, request.task_id)?
         .ok_or_else(|| format!("No task {} in this project", request.task_id))?;
 
@@ -246,16 +235,10 @@ pub(crate) fn begin(
 
     // Only a fixed limit defers; Auto at its limit starts anyway, as the app's `Warn` does. A
     // limit that cannot be read starts too: the claim below is what decides.
-    let feature_task = crate::orchestration::feature_for_task(conn, &project_path, task.id)?
-        .is_some()
-        || coordinator;
-    if request.respect_capacity || feature_task {
+    if request.respect_capacity {
         if let Ok(status) = crate::pipeline_settings::capacity_status(conn) {
             let full = used_slots >= status.slots.max(0) as usize;
             if full && status.settings.concurrency_mode == ConcurrencyMode::Hard {
-                if consultant || coordinator {
-                    return Ok(Begun::Deferred);
-                }
                 let ask = ServerRequest::RequestTaskExecution(RequestTaskExecutionRequest {
                     project_path: project_path.clone(),
                     task_id: task.id,
@@ -272,16 +255,6 @@ pub(crate) fn begin(
     }
 
     // A one-shot pick from the window wins over the profile's, and is not written anywhere.
-    if feature_task
-        && request
-            .agent_id
-            .as_ref()
-            .is_some_and(|id| Some(id.clone()) != profiles::agent_for(&project_path, &task, role))
-    {
-        return Err("Feature execution must use its assigned team profile"
-            .to_string()
-            .into());
-    }
     let agent = request
         .agent_id
         .clone()
@@ -525,29 +498,10 @@ async fn run(
     } = claimed;
 
     let workspace = crate::worktree::prepare_task_workspace(&launcher.store, &task, role).await?;
-    crate::orchestration::verify_workspace_basis(
-        &launcher.store,
-        &project_path,
-        task.id,
-        &workspace.cwd,
-    )
-    .await?;
 
-    let session_id = uuid::Uuid::new_v4().to_string();
-    let isolated = {
-        let conn = launcher.store.lock().await;
-        crate::orchestration::feature_for_task(&conn, &project_path, task.id)?.is_some()
-            || crate::orchestration::orchestrator_for(&conn, &project_path, task.id)?.is_some()
-    };
-    // Feature turns get a dedicated process: a stuck provider can be stopped without killing another feature.
-    let connection_key = if isolated {
-        format!("feature-session:{session_id}")
-    } else {
-        agent_id.clone()
-    };
     // The agent process runs in the project, never in the worktree: see `automation_runner`.
     let connection = crate::helpers::ensure_and_get_connection(
-        &connection_key,
+        &agent_id,
         &launcher.agent_connections,
         &command,
         &args,
@@ -558,6 +512,7 @@ async fn run(
     .await
     .ok_or_else(|| format!("The agent {agent_id} could not be started"))?;
 
+    let session_id = uuid::Uuid::new_v4().to_string();
     let requested_at = chrono::Utc::now();
     let mut result = match crate::session::connection::create_session_on_connection(
         &connection,
@@ -570,21 +525,11 @@ async fn run(
     .await
     {
         Ok(result) => result,
-        Err(message) if message == AUTH_REQUIRED_ERROR => {
-            if isolated {
-                crate::helpers::evict_if_same_connection(
-                    &launcher.agent_connections,
-                    &connection_key,
-                    &connection.router,
-                )
-                .await;
-            }
-            return Err(Failure::AuthRequired);
-        }
+        Err(message) if message == AUTH_REQUIRED_ERROR => return Err(Failure::AuthRequired),
         Err(message) => {
             crate::helpers::evict_if_same_connection(
                 &launcher.agent_connections,
-                &connection_key,
+                &agent_id,
                 &connection.router,
             )
             .await;
@@ -776,14 +721,6 @@ async fn prepare(
         );
     }
 
-    {
-        let conn = launcher.store.lock().await;
-        let current = crate::task_store::get(&conn, project_path, task.id)?;
-        if current.is_none_or(|t| t.phase != Some(TaskPhase::Spawning)) {
-            return Err(Failure::Moved);
-        }
-        crate::orchestration::check_start(&conn, project_path, task.id)?;
-    }
     let mut commands = settings_commands(&settings, config_options);
     commands.push(SessionCommand::PromptStructured(composed.blocks));
     for command in commands {

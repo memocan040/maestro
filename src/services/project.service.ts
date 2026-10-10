@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useEffect } from "react";
 import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
 import { listen } from "@tauri-apps/api/event";
@@ -391,11 +390,5 @@ export function useCreateNewProject() {
     onError: (error) => {
       console.error("Create project failed:", error);
     },
-  });
-}
-
-export function useConfirmCustomProject() {
-  return useMutation({
-    mutationFn: (projectId: number) => invoke<void>("confirm_custom_project", { projectId }),
   });
 }
