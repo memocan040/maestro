@@ -461,6 +461,191 @@ pub(super) async fn get_automation_run(
     Ok(value)
 }
 
+// --- Task assistants ---
+// Reuse Maestro's proven automation runner as an isolated ACP executor. These are
+// manual, one-shot sessions; they never create new Kanban cards or modify the pipeline.
+pub(super) async fn delegate_assistant(
+    app_state: &Arc<AppState>,
+    session_id: &str,
+    arguments: &Value,
+) -> Result<Value, String> {
+    let agent_id = required_str(arguments, "agent_id")?;
+    let prompt = required_str(arguments, "prompt")?;
+    if prompt.len() > 12_000 {
+        return Err("Assistant instruction exceeds 12,000 bytes".into());
+    }
+    let mode = arguments.get("mode").and_then(Value::as_str).unwrap_or("execute");
+    if mode != "execute" {
+        return Err("Only isolated execute delegations are available in this version".into());
+    }
+
+    // Only a pipeline task session can delegate; automations and consultants cannot
+    // create unlimited recursive runs.
+    let (task_id, role, base_branch, parent_cwd) = {
+        let sessions = app_state.acp.sessions.lock().await;
+        let current = sessions.get(session_id).ok_or("Parent session is not active")?;
+        let task_id = current.task_id.ok_or("Only task sessions can delegate assistants")?;
+        let role = current.task_role.as_ref().ok_or("No pipeline role on parent session")?;
+        let role_key = serde_json::to_value(&role.role)
+            .ok().and_then(|v| v.as_str().map(str::to_string))
+            .ok_or("Unrecognized pipeline role")?;
+        (task_id, role_key, current.branch_name.clone(), current.cwd.clone())
+    };
+
+    // Never let a read-only Planner/Reviewer/Refiner bypass the original stage gate
+    // by launching an unattended writable Coder automation.
+    if role != "Coder" {
+        return Err("Executing assistants are only allowed during Implementation. Other pipeline stages remain read-only.".into());
+    }
+
+    let project = project(app_state, session_id).await?;
+    let (_, conn) = crate::core::get_project_with_git_conn(app_state, project.id).await?;
+    let config_path = format!(
+        "{}/.maestro/assistants.json",
+        project.path.trim_end_matches(&['/', '\\'][..])
+    );
+    let raw = crate::connectivity::files::read_text(&conn, &config_path)
+        .await.map_err(|_| "No assistants configured; use Project Settings → Agents → Assistants")?;
+    let config: Value = serde_json::from_str(&raw)
+        .map_err(|e| format!("Invalid assistants configuration: {e}"))?;
+    let allowed = config.get("by_role")
+        .and_then(|roles| roles.get(role.as_str()))
+        .and_then(Value::as_array)
+        .is_some_and(|agents| agents.iter().any(|a| a.as_str() == Some(agent_id)));
+    if !allowed {
+        return Err(format!("Agent {agent_id} is not an allowed assistant for {role}"));
+    }
+
+    let marker = format!("Assistant task #{task_id}:");
+    let active = query_automation_runs_via_server(project.key, project.path.clone(), None, app_state)
+        .await?.runs.into_iter().map(AutomationRun::from)
+        .filter(|run| run.automation_name.starts_with(&marker)
+            && run.status == crate::project::automations::AutomationRunStatus::Running)
+        .count();
+    if active >= 2 {
+        return Err("This task already has two running assistants".into());
+    }
+
+    let project_settings =
+        crate::project::settings::load_project_config_for(app_state, project.id)
+            .await.unwrap_or_default();
+    let base_branch = match base_branch {
+        Some(branch) if !branch.is_empty() => branch,
+        _ => super::host_tools::default_base_branch(app_state, project.id, &project_settings).await,
+    };
+
+    let automation_id = format!("assistant-{}", uuid::Uuid::new_v4().simple());
+    let automation = Automation {
+        id: automation_id.clone(),
+        project_path: project.path.clone(),
+        name: format!("{marker} {agent_id}"),
+        prompt: format!(
+            "You are an assistant to an existing Maestro task, NOT a new project orchestrator.\n\
+             Work independently in the isolated Git worktree provided by Maestro.\n\
+             You may edit source code, run commands and tests, and commit your changes on YOUR branch.\n\
+             DO NOT push, merge into main, reset other branches, or modify the parent's workspace.\n\
+             Return a concise summary of modifications, tests, the exact commit SHA, and any problems.\n\
+             The parent task's original workspace is {parent_cwd}; it will review and integrate your work.\n\
+             The parent instructed you to:\n\n{prompt}"
+        ),
+        agent_id: agent_id.to_string(),
+        cron: None,
+        timezone: "UTC".into(),
+        enabled: true,
+        model: None,
+        permission_mode: None,
+        effort: None,
+        workspace: AutomationWorkspace::NewWorktree { base_branch },
+        webhook_enabled: false,
+        webhook_overlap: WebhookOverlap::Refuse,
+        webhook_secret: None,
+        next_due_at: None,
+    };
+
+    // The selected provider's normal ACP permission prompts remain authoritative.
+    // Selection grants eligibility, not blanket filesystem or terminal permissions.
+    query_save_automation_via_server(
+        project.key, project.path.clone(), automation.into(), app_state
+    ).await?;
+    query_run_automation_via_server(project.key, automation_id.clone(), app_state).await?;
+
+    // RunAutomation is a fire-and-forget request. The daemon may not yet have
+    // committed the run when this host tool reads the run list; bounded retries
+    // are data reads only, never another paid provider start.
+    let mut found = None;
+    for _ in 0..10 {
+        let runs = query_automation_runs_via_server(
+            project.key, project.path.clone(), None, app_state
+        ).await?;
+        found = runs.runs.into_iter().map(AutomationRun::from)
+            .find(|run| run.automation_id == automation_id);
+        if found.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    let run = found.ok_or(
+        "Assistant launch was sent but its run ID is not yet visible;          inspect run history before requesting another launch"
+    )?;
+    Ok(json!({
+        "run_id": run.id,
+        "agent_id": agent_id,
+        "status": "running",
+        "note": "The assistant is executing in its own worktree. Call wait_assistant with this run_id to receive the result. Review commits before cherry-picking into the parent task branch. Never merge into the project's main branch automatically."
+    }))
+}
+
+/// One bounded server-side wait costs no additional LLM turns until it returns.
+/// A timeout does NOT start another assistant.
+pub(super) async fn wait_assistant(
+    app_state: &Arc<AppState>,
+    session_id: &str,
+    arguments: &Value,
+) -> Result<Value, String> {
+    let run_id = required_str(arguments, "run_id")?;
+    let seconds = arguments.get("wait_seconds").and_then(Value::as_u64)
+        .unwrap_or(45).clamp(1, 50);
+    let task_id = {
+        let sessions = app_state.acp.sessions.lock().await;
+        sessions.get(session_id)
+            .and_then(|s| s.task_id)
+            .ok_or("Only the requesting parent task can retrieve an assistant result")?
+    };
+    let project = project(app_state, session_id).await?;
+    let marker = format!("Assistant task #{task_id}:");
+    let until = tokio::time::Instant::now() + Duration::from_secs(seconds);
+    loop {
+        let runs = query_automation_runs_via_server(
+            project.key, project.path.clone(), None, app_state
+        ).await?;
+        let run = runs.runs.into_iter().map(AutomationRun::from)
+            .find(|run| run.id == run_id)
+            .ok_or("Assistant run not found in this project")?;
+        if !run.automation_id.starts_with("assistant-")
+            || !run.automation_name.starts_with(&marker)
+        {
+            return Err("This assistant run belongs to a different parent task".into());
+        }
+        if run.status != crate::project::automations::AutomationRunStatus::Running {
+            return Ok(json!({
+                "run_id": run.id,
+                "status": run.status,
+                "result": run.result,
+                "error": run.error,
+                "worktree_path": run.worktree_path,
+                "worktree_branch": run.worktree_branch,
+                "worktree_kept": run.worktree_kept,
+                "note": "Review the returned branch/commit and selectively integrate into your task workspace; no integration was performed automatically."
+            }));
+        }
+        if tokio::time::Instant::now() >= until {
+            return Ok(json!({ "run_id": run_id, "status": "running",
+                "note": "Still executing. This did not start another run. Wait again if useful." }));
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
 // --- Templates ---
 
 /// A template of either origin, as the tools speak of it. Ids are the Templates page's own card

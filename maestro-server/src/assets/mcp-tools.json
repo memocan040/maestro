@@ -618,6 +618,57 @@
           }
         }
       }
+    },
+    {
+      "name": "delegate_assistant",
+      "description": "Delegate a focused executable coding task to an assistant explicitly selected in this project's Pipeline → Assistants settings. Runs the specified ACP agent in an isolated Git worktree, where it may edit files, execute tests and commit. Only the current task's configured assistants can be used. Does not merge or push. Returns a run ID; call wait_assistant to receive the result. Delegate only useful parallel tasks; the parent is responsible for reviewing and integrating results.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "description": "An exact ACP agent ID selected as an assistant for your pipeline stage, e.g. codex-acp or claude-acp."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "Concrete bounded subtask, target files and acceptance criteria. The assistant can write code and execute commands."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "execute"
+            ],
+            "description": "Execute an isolated coding subtask."
+          }
+        },
+        "required": [
+          "agent_id",
+          "prompt"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "wait_assistant",
+      "description": "Wait for a delegated coding assistant to finish, without making repeated LLM calls. Returns actual final message, status, isolated worktree path and branch. If still running after the requested period, returns running; calling again does not launch another agent. The parent must review and integrate the commit into its own task worktree, never into main automatically.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string"
+          },
+          "wait_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 45
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "additionalProperties": false
+      }
     }
   ]
 }

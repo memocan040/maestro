@@ -409,7 +409,9 @@ mod tests {
                 "get_prompt",
                 "create_prompt",
                 "update_prompt",
-                "delete_prompt"
+                "delete_prompt",
+                "delegate_assistant",
+                "wait_assistant"
             ]
         );
         for tool in tools {

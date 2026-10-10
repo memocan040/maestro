@@ -122,6 +122,33 @@ pub fn compose(
         )));
     }
 
+    // Optional assistants belong to the implementation agent, not another pipeline.
+    if role == AgentRole::Coder {
+        let selected = std::fs::read_to_string(
+            std::path::Path::new(project_path).join(".maestro/assistants.json"),
+        ).ok()
+            .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
+            .and_then(|body| body.get("by_role")?.get("Coder")?.as_array().cloned())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect::<Vec<_>>();
+        if !selected.is_empty() {
+            blocks.push(text(format!(
+                "## Optional cross-provider assistants\n\
+                 You may delegate real coding subtasks to these selected agents: {}.\n\
+                 Use Maestro MCP delegate_assistant with agent_id and a focused prompt to start \
+                 a separate ACP coding agent in its own Git worktree. It can edit, test, and commit.\n\
+                 Use wait_assistant with the returned run_id to collect its final result without \
+                 unnecessary LLM polling. Review its branch and integrate commits into YOUR \
+                 task workspace using normal Git. Never merge into main automatically. \
+                 Do not delegate trivial work, and never start more than two assistants. \
+                 Assistants do not run automatically; you remain responsible for the task.",
+                selected.join(", ")
+            )));
+        }
+    }
+
     if role == AgentRole::Coder {
         if let Some(plan) = latest("plan")? {
             blocks.push(text(format!("## The approved plan\n\n{plan}")));
