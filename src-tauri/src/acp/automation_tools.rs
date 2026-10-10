@@ -569,12 +569,24 @@ pub(super) async fn delegate_assistant(
     ).await?;
     query_run_automation_via_server(project.key, automation_id.clone(), app_state).await?;
 
-    let runs = query_automation_runs_via_server(
-        project.key, project.path.clone(), None, app_state
-    ).await?;
-    let run = runs.runs.into_iter().map(AutomationRun::from)
-        .find(|run| run.automation_id == automation_id)
-        .ok_or("Assistant launch was submitted but its run ID is not yet visible; inspect run history before retrying")?;
+    // RunAutomation is a fire-and-forget request. The daemon may not yet have
+    // committed the run when this host tool reads the run list; bounded retries
+    // are data reads only, never another paid provider start.
+    let mut found = None;
+    for _ in 0..10 {
+        let runs = query_automation_runs_via_server(
+            project.key, project.path.clone(), None, app_state
+        ).await?;
+        found = runs.runs.into_iter().map(AutomationRun::from)
+            .find(|run| run.automation_id == automation_id);
+        if found.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    let run = found.ok_or(
+        "Assistant launch was sent but its run ID is not yet visible;          inspect run history before requesting another launch"
+    )?;
     Ok(json!({
         "run_id": run.id,
         "agent_id": agent_id,
