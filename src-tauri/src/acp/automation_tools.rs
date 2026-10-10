@@ -492,6 +492,12 @@ pub(super) async fn delegate_assistant(
         (task_id, role_key, current.branch_name.clone(), current.cwd.clone())
     };
 
+    // Never let a read-only Planner/Reviewer/Refiner bypass the original stage gate
+    // by launching an unattended writable Coder automation.
+    if role != "Coder" {
+        return Err("Executing assistants are only allowed during Implementation. Other pipeline stages remain read-only.".into());
+    }
+
     let project = project(app_state, session_id).await?;
     let (_, conn) = crate::core::get_project_with_git_conn(app_state, project.id).await?;
     let config_path = format!(
@@ -503,7 +509,7 @@ pub(super) async fn delegate_assistant(
     let config: Value = serde_json::from_str(&raw)
         .map_err(|e| format!("Invalid assistants configuration: {e}"))?;
     let allowed = config.get("by_role")
-        .and_then(|roles| roles.get(&role))
+        .and_then(|roles| roles.get(role.as_str()))
         .and_then(Value::as_array)
         .is_some_and(|agents| agents.iter().any(|a| a.as_str() == Some(agent_id)));
     if !allowed {
