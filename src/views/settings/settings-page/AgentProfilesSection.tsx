@@ -9,6 +9,7 @@ import { isReadOnlyRole } from "@/lib/permission-modes";
 import { useSelectedProject } from "@/store/projectStore";
 import type { AgentProfile, AgentRole, ConnectionKey, ProfilesDocument } from "@/types/bindings";
 import { cn } from "@/lib/utils";
+import { StageAssistants } from "./StageAssistants";
 
 /**
  * The four roles, in the order a task passes through them.
@@ -341,6 +342,7 @@ export function AgentProfilesSection({ projectId, agents, connection }: AgentPro
               </Button>
             </div>
 
+            <StageAssistants role={role} agents={agents} connection={connection} projectPath={projectPath} />
             {forRole.length === 0 ? (
               <p className="text-[11px] text-muted-foreground italic">
                 {role === "Coder"
