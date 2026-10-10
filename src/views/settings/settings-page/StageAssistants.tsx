@@ -42,7 +42,9 @@ export function StageAssistants({
       .finally(() => {
         if (alive) setLoaded(true);
       });
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [path, connection]);
 
   const update = (id: string, checked: boolean) => {
@@ -70,29 +72,31 @@ export function StageAssistants({
   if (role !== "Coder" || !projectPath || !agents.length) return null;
   return (
     <details className="rounded-md border border-border/60 p-3">
-      <summary className="cursor-pointer text-xs font-medium">Optional assistants ({(selected[role] ?? []).length})</summary>
+      <summary className="cursor-pointer text-xs font-medium">
+        Optional assistants ({(selected[role] ?? []).length})
+      </summary>
       <div className="mt-3 space-y-2">
-      <div className="flex flex-wrap items-baseline gap-2">
-        <span className="text-xs font-medium">Assistants</span>
-        <span className="text-[11px] text-muted-foreground">
-          Optional helpers · launched only when the main agent delegates
-        </span>
-      </div>
-      <div className="flex flex-wrap gap-x-4 gap-y-2">
-        {agents.map((agent) => (
-          <label key={agent.id} className="flex items-center gap-1.5 text-xs cursor-pointer">
-            <input
-              type="checkbox"
-              aria-label={role + " assistant " + agent.name}
-              disabled={!loaded}
-              checked={(selected[role] ?? []).includes(agent.id)}
-              onChange={(e) => update(agent.id, e.target.checked)}
-            />
-            {agent.name}
-          </label>
-        ))}
-      </div>
-      {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+        <div className="flex flex-wrap items-baseline gap-2">
+          <span className="text-xs font-medium">Assistants</span>
+          <span className="text-[11px] text-muted-foreground">
+            Optional helpers · launched only when the main agent delegates
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-x-4 gap-y-2">
+          {agents.map((agent) => (
+            <label key={agent.id} className="flex items-center gap-1.5 text-xs cursor-pointer">
+              <input
+                type="checkbox"
+                aria-label={role + " assistant " + agent.name}
+                disabled={!loaded}
+                checked={(selected[role] ?? []).includes(agent.id)}
+                onChange={(e) => update(agent.id, e.target.checked)}
+              />
+              {agent.name}
+            </label>
+          ))}
+        </div>
+        {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
       </div>
     </details>
   );
